@@ -1,0 +1,11 @@
+# Build intermediates. bin\ is deliberately NOT ignored: the built SleepPicker.exe is
+# committed so the target machines, which have no toolchain, can just run it.
+obj/
+*.pdb
+*.suo
+*.user
+
+# Local working files, not part of the project.
+task.md
+winminal.md
+sleep.png
