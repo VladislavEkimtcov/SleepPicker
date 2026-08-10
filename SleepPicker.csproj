@@ -69,6 +69,7 @@
     <Compile Include="src\MoonIcon.cs" />
     <Compile Include="src\Settings.cs" />
     <Compile Include="src\AutoStart.cs" />
+    <Compile Include="src\BatteryMeter.cs" />
     <Compile Include="src\SingleInstance.cs" />
     <Compile Include="src\Properties\AssemblyInfo.cs" />
   </ItemGroup>

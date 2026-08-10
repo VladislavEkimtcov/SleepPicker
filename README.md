@@ -19,9 +19,17 @@ anywhere: click the moon in the notification area, pick a time.
   plans are already there. A timeout that is not one of the presets — say 7 minutes, set
   by something else — is shown at the top, ticked, rather than leaving nothing selected.
 - **A moon that is also the battery gauge.** Described below.
+- **One battery indicator instead of two.** Windows' own battery meter can be switched off
+  from the same menu, leaving the moon as the only one. Windows keeps that setting out of
+  a user's own reach, so this is the one thing here that needs an administrator's approval,
+  and the taskbar only reads it at startup, so Explorer has to restart. SleepPicker says
+  both of those in a dialog and does nothing at all unless you agree; on a desktop the row
+  is hidden, like the moon row. While it is on, Windows greys out its own **Power** toggle
+  in Settings → Taskbar, so unticking here is the way back.
 - **Start with Windows.** A checkbox, and nothing more than a per-user `Run` entry.
-- **Nothing to install, nothing left behind.** One 94 KB executable, no runtime, no
-  elevation, no configuration file, and at most two registry values under HKCU.
+- **Nothing to install, nothing left behind.** One 100 KB executable, no runtime, no
+  configuration file, and at most three registry values under HKCU. Nothing is elevated
+  except the one optional change above, and only at the moment you ask for it.
 
 Either mouse button opens the menu. Launching SleepPicker while it is already running
 opens the menu rather than adding a second icon.
@@ -96,8 +104,12 @@ code is written to, and which changes should keep to:
 - **No NuGet packages**, ever — there is no restore.
 - **One self-contained `.exe`.** Framework references are marked `Private=False` so
   nothing is copied beside it.
-- **Never require elevation.** The manifest requests `asInvoker`. Changing power timeouts
-  does not need admin rights, so SleepPicker never asks for them.
+- **Never require elevation.** The manifest requests `asInvoker`, and everything the tray
+  menu does works without admin rights — changing power timeouts does not need them. The
+  single exception is hiding Windows' battery meter, which lives in the part of the
+  registry Windows keeps read-only for the user; that one write is handed to a second copy
+  of the executable started with the `runas` verb, so the prompt appears only when that row
+  is ticked, and never at startup.
 - **Autostart through the per-user Run key**, not a service or scheduled task.
 - **Write nothing outside the user profile**, and as little as possible inside it: turning
   **Dynamic tray icon** back on deletes its value, and the key with it.
@@ -145,6 +157,7 @@ src/
   MoonIcon.cs        draws the moon at a given phase, waning or waxing
   Settings.cs        the dynamic-icon preference, under HKCU
   AutoStart.cs       the Run-key checkbox
+  BatteryMeter.cs    hides Windows' own battery icon, and restarts the shell to show it
   SingleInstance.cs  mutex plus "show the menu" signal
 tools/
   MakeIcon.ps1       regenerates the .ico from assets/SleepPicker.png

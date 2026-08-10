@@ -10,7 +10,9 @@ namespace SleepPicker
     /// <summary>
     /// The whole user interface: one notification-area icon whose menu mirrors the four
     /// dropdowns of Settings -> System -> Power &amp; sleep. There is deliberately no
-    /// window, no taskbar button and no settings dialog.
+    /// window, no taskbar button and no settings dialog -- the one dialog in the program
+    /// is the confirmation before restarting Explorer, which is not a setting but a
+    /// warning the user has to be able to decline.
     /// </summary>
     internal sealed class TrayApp : ApplicationContext
     {
@@ -26,6 +28,7 @@ namespace SleepPicker
         private readonly ToolStripMenuItem[] _targetItems;
         private readonly ToolStripMenuItem _autoStartItem;
         private readonly ToolStripMenuItem _dynamicIconItem;
+        private readonly ToolStripMenuItem _hideBatteryMeterItem;
         private readonly SingleInstance _singleInstance;
         private readonly SynchronizationContext _uiContext;
 
@@ -81,6 +84,13 @@ namespace SleepPicker
                 "Show the battery charge as the moon's phase — waning on battery, waxing on mains.";
             _dynamicIconItem.Click += OnDynamicIconClick;
             _menu.Items.Add(_dynamicIconItem);
+
+            _hideBatteryMeterItem = new ToolStripMenuItem("Hide the Windows battery icon");
+            _hideBatteryMeterItem.ToolTipText =
+                "Switch off Windows' own battery meter, leaving the moon as the only one. " +
+                "Needs an administrator's approval and restarts Explorer; you are asked first.";
+            _hideBatteryMeterItem.Click += OnHideBatteryMeterClick;
+            _menu.Items.Add(_hideBatteryMeterItem);
 
             ToolStripMenuItem exitItem = new ToolStripMenuItem("Exit");
             exitItem.Click += OnExitClick;
@@ -305,6 +315,12 @@ namespace SleepPicker
             _dynamicIconItem.Visible = hasBattery;
             _dynamicIconItem.Checked = Settings.DynamicTrayIcon;
 
+            // Likewise: there is no meter to hide on a machine with no battery. Read from
+            // the registry rather than remembered, because a policy or another tool can
+            // set the same value.
+            _hideBatteryMeterItem.Visible = hasBattery;
+            _hideBatteryMeterItem.Checked = BatteryMeter.IsHidden();
+
             // Opening the menu is also when a battery that appeared since the last look --
             // a tablet back in its dock -- gets noticed.
             _refreshTimer.Enabled = Settings.DynamicTrayIcon && hasBattery;
@@ -402,6 +418,92 @@ namespace SleepPicker
             // icon never disagree.
             _refreshTimer.Enabled = IsMoonWanted();
             RefreshIcon();
+        }
+
+        private void OnHideBatteryMeterClick(object sender, EventArgs e)
+        {
+            bool hide = !BatteryMeter.IsHidden();
+
+            // Asked before anything is written, so backing out leaves the registry exactly
+            // as it was rather than half-changed until the next sign-in.
+            if (!ConfirmExplorerRestart(hide))
+            {
+                return;
+            }
+
+            BatteryMeter.ChangeResult result;
+            try
+            {
+                result = BatteryMeter.RequestHidden(hide);
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the Windows battery icon setting: " + ex.Message);
+                return;
+            }
+
+            if (result == BatteryMeter.ChangeResult.Declined)
+            {
+                // The elevation prompt was refused. Nothing was written, so there is
+                // nothing to say and nothing to restart.
+                return;
+            }
+            if (result == BatteryMeter.ChangeResult.Failed)
+            {
+                ShowError("Windows would not let the battery icon setting be changed.");
+                return;
+            }
+
+            try
+            {
+                BatteryMeter.RestartExplorer();
+            }
+            catch (Exception ex)
+            {
+                // The setting is written either way; only the moment it becomes visible is
+                // lost, so say so rather than undoing what was asked for.
+                ShowError("The setting was changed, but Explorer could not be restarted: " +
+                    ex.Message + " It takes effect the next time you sign in.");
+            }
+        }
+
+        /// <summary>
+        /// The one dialog in the program. Restarting the shell is disruptive enough that it
+        /// has to be declinable, and false here means nothing is asked for and nothing is
+        /// written at all.
+        /// </summary>
+        private static bool ConfirmExplorerRestart(bool hide)
+        {
+            string message =
+                (hide ? "Hiding" : "Showing") + " the Windows battery icon takes two things " +
+                "Windows asks for: an administrator's approval, because this setting is one " +
+                "of the ones users are not allowed to change for themselves, and a restart " +
+                "of Windows Explorer, because the taskbar only reads it when it starts." +
+                Environment.NewLine + Environment.NewLine +
+                "The taskbar will disappear for a moment and any open File Explorer windows " +
+                "will close. Nothing is changed if you choose No." +
+                Environment.NewLine + Environment.NewLine +
+                "Continue?";
+
+            // A tray application has no window of its own to own the box, and an unowned
+            // one can come up behind whatever the user is looking at. A top-most form
+            // parked off screen gives it something to sit in front of.
+            using (Form owner = new Form())
+            {
+                owner.ShowInTaskbar = false;
+                owner.FormBorderStyle = FormBorderStyle.None;
+                owner.StartPosition = FormStartPosition.Manual;
+                owner.Location = new Point(-32000, -32000);
+                owner.Size = new Size(1, 1);
+                owner.TopMost = true;
+                owner.Show();
+
+                DialogResult answer = MessageBox.Show(owner, message, "SleepPicker",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+
+                owner.Hide();
+                return answer == DialogResult.Yes;
+            }
         }
 
         private void OnIconMouseUp(object sender, MouseEventArgs e)
