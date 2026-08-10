@@ -50,7 +50,8 @@ appearing to have nothing selected.
 
 ## Install
 
-1. Download `SleepPicker.exe` from the [latest release](../../releases/latest).
+1. Download `SleepPicker.exe` from the
+   [latest release](https://github.com/VladislavEkimtcov/SleepPicker/releases/latest).
 2. Put it anywhere you like — it is one file and writes nothing beside itself.
 3. Run it. A gold crescent appears in the notification area.
 4. Optionally tick **Start with Windows**.
