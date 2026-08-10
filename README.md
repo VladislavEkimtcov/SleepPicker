@@ -80,11 +80,16 @@ machine with no .NET SDK, no Visual Studio, no NuGet and no package manager. Out
 no targeting packs installed, MSBuild resolves the framework references from the GAC
 instead, and the build succeeds.
 
-To regenerate the icon after editing `tools\MakeIcon.ps1`:
+The icon is built from `assets\SleepPicker.png`, a crescent drawn on a solid white
+background. To regenerate `assets\SleepPicker.ico` after redrawing it:
 
 ```cmd
 powershell.exe -ExecutionPolicy Bypass -File tools\MakeIcon.ps1
 ```
+
+That keys the white out to transparency, scales the artwork down to the six sizes the
+shell asks for, and packs them into one `.ico` — with System.Drawing alone, since the
+target machines have no image editor.
 
 ## Design constraints
 
@@ -134,7 +139,9 @@ src/
   AutoStart.cs       the Run-key checkbox
   SingleInstance.cs  mutex plus "show the menu" signal
   app.manifest       asInvoker, per-monitor DPI, visual styles
-assets/              generated icon
-tools/MakeIcon.ps1   regenerates it
+assets/
+  SleepPicker.png    the artwork, drawn on white
+  SleepPicker.ico    generated from it, embedded in the exe
+tools/MakeIcon.ps1   regenerates the .ico from the .png
 bin/SleepPicker.exe  the build, committed so it can just be downloaded
 ```
