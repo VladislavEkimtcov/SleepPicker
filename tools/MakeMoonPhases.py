@@ -51,7 +51,7 @@ def lit(x, y, radius, terminator):
     projects to an ellipse sharing the disk's vertical radius. `terminator` is its signed
     horizontal semi-axis: negative bulges right (gibbous), positive cuts left (crescent),
     zero is a straight edge at half moon. The moon is lit on its left, as a waning moon
-    is, which is the way the artwork's crescent opens.
+    is, which is the way the artwork's crescent opens; `render` mirrors it for a waxing one.
     """
     if (x * x) + (y * y) > radius * radius:
         return False
@@ -64,8 +64,14 @@ def lit(x, y, radius, terminator):
     return x <= 0.0 and ellipse >= 1.0
 
 
-def render(percent, size):
-    """One frame as straight-alpha RGBA bytes, `size` x `size`."""
+def render(percent, size, waxing=False):
+    """
+    One frame as straight-alpha RGBA bytes, `size` x `size`.
+
+    `waxing` mirrors the finished picture about the vertical -- tilt and all -- which is
+    the difference between a moon on its way up and one on its way down, and is how the
+    tray icon says the machine is on mains.
+    """
     centre = size / 2.0
     radius = DISK_RADIUS * size
     nominal_rim = max(1.0, RIM_WIDTH * size)
@@ -109,6 +115,10 @@ def render(percent, size):
                 dy = py + ((sy + 0.5) * step) - centre
                 for sx in range(SUPERSAMPLE):
                     dx = px + ((sx + 0.5) * step) - centre
+                    if waxing:
+                        # Sampling the mirror of a point is the same as mirroring the
+                        # picture, and costs one sign instead of a second pass.
+                        dx = -dx
 
                     # Rotate the sample back into the upright moon's frame. Screen y
                     # points down, so this undoes an anticlockwise tilt on screen.
@@ -186,34 +196,44 @@ def main():
     levels = list(range(101))
     columns = 10
 
-    # A large block to judge the shapes by, and the same series at 16px -- the size the
-    # notification area actually asks for at 100% scaling -- to judge legibility by.
+    # A large block to judge the shapes by, then the same series twice at 16px -- the size
+    # the notification area actually asks for at 100% scaling -- to judge legibility by:
+    # waning, as the icon is drawn on battery, and waxing, as it is drawn on mains.
     large, small = 48, 16
     gap, margin = 4, 12
+    # Wider than the gap between frames, so the three blocks read as three and not as one
+    # long series.
+    band_gap = 24
     rows = (len(levels) + columns - 1) // columns
 
     width = (columns * (large + gap)) - gap + (2 * margin)
     large_block = (rows * (large + gap)) - gap
     small_block = (rows * (small + gap)) - gap
-    height = (2 * margin) + large_block + (2 * gap) + small_block
+    height = (2 * margin) + large_block + small_block + small_block + (2 * band_gap)
 
     # Mid grey: both the gold fill and the dark rim read against it, whichever theme the
     # sheet is being viewed in.
     sheet = bytearray([0x6E]) * (width * height * 3)
 
+    waning_top = margin + large_block + band_gap
+    waxing_top = waning_top + small_block + band_gap
+
     for index, percent in enumerate(levels):
         column = index % columns
         row = index // columns
-        # Both blocks share the large block's column pitch, so a frame sits directly
+        # Every block shares the large block's column pitch, so a frame sits directly
         # under its own big version.
         column_left = margin + (column * (large + gap))
+        small_left = column_left + ((large - small) // 2)
 
         blend(sheet, width, render(percent, large), large,
               column_left, margin + (row * (large + gap)))
 
         blend(sheet, width, render(percent, small), small,
-              column_left + ((large - small) // 2),
-              margin + large_block + (2 * gap) + (row * (small + gap)))
+              small_left, waning_top + (row * (small + gap)))
+
+        blend(sheet, width, render(percent, small, True), small,
+              small_left, waxing_top + (row * (small + gap)))
 
         print('rendered %d%%' % percent, end='\r')
 

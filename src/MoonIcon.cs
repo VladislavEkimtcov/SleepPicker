@@ -47,8 +47,13 @@ namespace SleepPicker
         /// The moon at <paramref name="percent"/> charge, as a square icon
         /// <paramref name="size"/> pixels on a side. The caller owns the result and must
         /// dispose it.
+        ///
+        /// A waxing moon is the mirror image of the waning one at the same phase -- lit on
+        /// the other limb -- which is how the real moon tells a night before full from a
+        /// night after it. Charging is drawn waxing for the same reason: the charge is on
+        /// its way up rather than down.
         /// </summary>
-        public static Icon Create(int percent, int size)
+        public static Icon Create(int percent, int size, bool waxing)
         {
             if (size < 1)
             {
@@ -61,13 +66,13 @@ namespace SleepPicker
             {
                 using (Graphics graphics = Graphics.FromImage(bitmap))
                 {
-                    Draw(graphics, percent, size);
+                    Draw(graphics, percent, size, waxing);
                 }
                 return ToIcon(bitmap);
             }
         }
 
-        private static void Draw(Graphics graphics, int percent, int size)
+        private static void Draw(Graphics graphics, int percent, int size, bool waxing)
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -95,7 +100,14 @@ namespace SleepPicker
             float litWidth = radius - terminator;
             float rim = Math.Min(nominalRim, litWidth / 4f);
 
+            // Read bottom-up: each call is prepended, so the last one written is the first
+            // one a point goes through. Centre the moon, tilt it, and -- when it is waxing
+            // -- flip the finished picture about the vertical, tilt and all.
             graphics.TranslateTransform(centre, centre);
+            if (waxing)
+            {
+                graphics.ScaleTransform(-1f, 1f);
+            }
             // Negative turns anticlockwise on screen, where y points down.
             graphics.RotateTransform(-TiltDegrees);
             graphics.TranslateTransform(-centre, -centre);

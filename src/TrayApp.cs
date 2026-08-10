@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace SleepPicker
 {
@@ -34,10 +35,17 @@ namespace SleepPicker
         // thread, where the icon can be swapped without marshalling.
         private readonly System.Windows.Forms.Timer _refreshTimer;
 
-        /// <summary>The moon currently in the notification area, owned here, or null.</summary>
-        private Icon _moonIcon;
+        /// <summary>
+        /// The same charge drawn both ways -- waning for a battery going down, waxing for
+        /// one on mains -- owned here, or null. Both are drawn together and kept, so that
+        /// plugging the cable in swaps a reference rather than starting a redraw: a moon
+        /// that turned round half a second after the cable went in would read as a
+        /// coincidence rather than as an answer.
+        /// </summary>
+        private Icon _waningMoon;
+        private Icon _waxingMoon;
 
-        // What the moon on screen was drawn for, so an unchanged charge costs nothing.
+        // What the pair was drawn for, so an unchanged charge costs nothing.
         private int _shownPercent = -1;
         private int _shownSize = -1;
 
@@ -69,7 +77,8 @@ namespace SleepPicker
             _menu.Items.Add(_autoStartItem);
 
             _dynamicIconItem = new ToolStripMenuItem("Dynamic tray icon");
-            _dynamicIconItem.ToolTipText = "Show the battery charge as the moon's phase.";
+            _dynamicIconItem.ToolTipText =
+                "Show the battery charge as the moon's phase — waning on battery, waxing on mains.";
             _dynamicIconItem.Click += OnDynamicIconClick;
             _menu.Items.Add(_dynamicIconItem);
 
@@ -91,6 +100,8 @@ namespace SleepPicker
             _refreshTimer.Interval = RefreshIntervalMilliseconds;
             _refreshTimer.Tick += OnRefreshTick;
             _refreshTimer.Enabled = IsMoonWanted();
+
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
         }
 
         /// <summary>
@@ -128,7 +139,8 @@ namespace SleepPicker
         private void RefreshIcon()
         {
             int percent;
-            if (!Settings.DynamicTrayIcon || !PowerSettings.TryGetBatteryPercent(out percent))
+            bool onMains;
+            if (!Settings.DynamicTrayIcon || !PowerSettings.TryGetBatteryStatus(out percent, out onMains))
             {
                 ShowStaticIcon();
                 return;
@@ -137,36 +149,67 @@ namespace SleepPicker
             // Re-read rather than cached: the notification area asks for a different size
             // when the display's scaling changes, and that can happen while we run.
             int size = SystemInformation.SmallIconSize.Width;
-            if (_moonIcon != null && percent == _shownPercent && size == _shownSize)
+
+            Icon staleWaning = null;
+            Icon staleWaxing = null;
+            if (_waningMoon == null || percent != _shownPercent || size != _shownSize)
             {
-                return;
+                Icon waning;
+                Icon waxing;
+                try
+                {
+                    waning = MoonIcon.Create(percent, size, false);
+                    try
+                    {
+                        waxing = MoonIcon.Create(percent, size, true);
+                    }
+                    catch (Exception)
+                    {
+                        waning.Dispose();
+                        throw;
+                    }
+                }
+                catch (Exception)
+                {
+                    // Drawing needs a GDI+ bitmap, which can fail when the session is
+                    // starved of handles. The fixed artwork always works, so fall back to
+                    // it rather than showing half a pair.
+                    ShowStaticIcon();
+                    return;
+                }
+
+                // Held, not yet disposed: the shell keeps the handle it was last given
+                // until it has been handed a replacement below.
+                staleWaning = _waningMoon;
+                staleWaxing = _waxingMoon;
+                _waningMoon = waning;
+                _waxingMoon = waxing;
+                _shownPercent = percent;
+                _shownSize = size;
             }
 
-            Icon moon;
-            try
+            // Assigning either of these hands the shell a fresh notification, so both are
+            // compared first: most ticks find nothing at all to say.
+            Icon wanted = onMains ? _waxingMoon : _waningMoon;
+            if (!ReferenceEquals(_notifyIcon.Icon, wanted))
             {
-                moon = MoonIcon.Create(percent, size);
-            }
-            catch (Exception)
-            {
-                // Drawing needs a GDI+ bitmap, which can fail when the session is starved
-                // of handles. The fixed artwork always works, so fall back to it.
-                ShowStaticIcon();
-                return;
+                _notifyIcon.Icon = wanted;
             }
 
-            // The old icon is released only once the new one is on screen: the shell is
-            // holding that handle until it has been handed a replacement.
-            Icon previous = _moonIcon;
-            _moonIcon = moon;
-            _notifyIcon.Icon = moon;
-            _notifyIcon.Text = "SleepPicker — " + percent.ToString() + "% battery";
-            _shownPercent = percent;
-            _shownSize = size;
-
-            if (previous != null)
+            string text = "SleepPicker — " + percent.ToString() + "% battery" +
+                (onMains ? ", charging" : "");
+            if (_notifyIcon.Text != text)
             {
-                previous.Dispose();
+                _notifyIcon.Text = text;
+            }
+
+            if (staleWaning != null)
+            {
+                staleWaning.Dispose();
+            }
+            if (staleWaxing != null)
+            {
+                staleWaxing.Dispose();
             }
         }
 
@@ -179,14 +222,38 @@ namespace SleepPicker
                 _notifyIcon.Icon = _staticIcon;
                 _notifyIcon.Text = "SleepPicker";
             }
-            if (_moonIcon != null)
+            if (_waningMoon != null)
             {
-                _moonIcon.Dispose();
-                _moonIcon = null;
+                _waningMoon.Dispose();
+                _waningMoon = null;
+            }
+            if (_waxingMoon != null)
+            {
+                _waxingMoon.Dispose();
+                _waxingMoon = null;
             }
         }
 
         private void OnRefreshTick(object sender, EventArgs e)
+        {
+            RefreshIcon();
+        }
+
+        /// <summary>
+        /// The cable going in or out, among other things. Windows announces it, so the
+        /// moon turns round as it happens rather than at some point in the next minute.
+        /// </summary>
+        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            if (e.Mode != PowerModes.StatusChange)
+            {
+                return;
+            }
+            // SystemEvents raises this on its own thread; the icon belongs to the UI one.
+            _uiContext.Post(new SendOrPostCallback(RefreshIconCallback), null);
+        }
+
+        private void RefreshIconCallback(object state)
         {
             RefreshIcon();
         }
@@ -401,13 +468,21 @@ namespace SleepPicker
             if (disposing)
             {
                 _singleInstance.ShowMenuRequested -= OnShowMenuRequested;
+                // SystemEvents holds its handlers in a static list, so leaving this
+                // attached would keep the whole application context alive.
+                SystemEvents.PowerModeChanged -= OnPowerModeChanged;
                 _refreshTimer.Dispose();
                 _notifyIcon.Dispose();
                 _menu.Dispose();
-                if (_moonIcon != null)
+                if (_waningMoon != null)
                 {
-                    _moonIcon.Dispose();
-                    _moonIcon = null;
+                    _waningMoon.Dispose();
+                    _waningMoon = null;
+                }
+                if (_waxingMoon != null)
+                {
+                    _waxingMoon.Dispose();
+                    _waxingMoon = null;
                 }
                 _staticIcon.Dispose();
             }

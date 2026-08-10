@@ -26,6 +26,9 @@ namespace SleepPicker
         /// <summary>No system battery -- the machine is a desktop.</summary>
         private const byte BatteryFlagNoBattery = 128;
 
+        /// <summary>Mains power is connected. The other values are 0 (on battery) and 255 (unknown).</summary>
+        private const byte AcLineOnline = 1;
+
         /// <summary>Timeout in seconds meaning "Never".</summary>
         public const uint Never = 0;
 
@@ -66,14 +69,23 @@ namespace SleepPicker
         }
 
         /// <summary>
-        /// Charge remaining, 0 to 100. False when there is no battery, or when the
-        /// firmware does not report a level -- GetSystemPowerStatus answers 255 for
-        /// "unknown", which is what virtual machines and some docks give back, and a
-        /// caller must not draw 255% of a moon.
+        /// Charge remaining, 0 to 100, and whether the machine is running on mains power.
+        /// False when there is no battery, or when the firmware does not report a level --
+        /// GetSystemPowerStatus answers 255 for "unknown", which is what virtual machines
+        /// and some docks give back, and a caller must not draw 255% of a moon.
+        ///
+        /// Both facts come out of one call so that they cannot disagree: asking twice
+        /// could catch the charge from before a cable went in and the power source from
+        /// after it, and draw a moon that was never true.
+        ///
+        /// Mains power, rather than the BatteryFlag "charging" bit: a laptop holding its
+        /// battery at 80% on purpose is not charging, but it is not draining either, and
+        /// the flag is the less reliable of the two across firmware.
         /// </summary>
-        public static bool TryGetBatteryPercent(out int percent)
+        public static bool TryGetBatteryStatus(out int percent, out bool onMains)
         {
             percent = 0;
+            onMains = false;
 
             SystemPowerStatus status;
             if (!NativeMethods.GetSystemPowerStatus(out status))
@@ -86,6 +98,7 @@ namespace SleepPicker
             }
 
             percent = status.BatteryLifePercent;
+            onMains = status.ACLineStatus == AcLineOnline;
             return true;
         }
 

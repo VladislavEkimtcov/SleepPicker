@@ -4,122 +4,83 @@ The four dropdowns from **Settings → System → Power & sleep**, as a tray men
 
 ![SleepPicker's tray menu, open above the notification area with a timeout submenu showing](docs/screenshot.png)
 
-Changing a screen-off or sleep timeout in Windows normally means Start → Settings → System
-→ Power & sleep → scroll → dropdown. SleepPicker puts the same four settings two clicks
-from anywhere: click the moon in the notification area, pick a time.
+Changing a screen-off or sleep timeout normally means Start → Settings → System → Power &
+sleep → scroll → dropdown. SleepPicker puts the same four settings two clicks from
+anywhere: click the moon in the notification area, pick a time.
 
-That is the whole program. There is no window, no settings dialog, no configuration file,
-and nothing running but a single 93 KB executable.
+## What it does
 
-## What the menu does
+- **All four timeouts, in one menu.** Screen off and sleep, on battery and plugged in.
+  Each row shows its current value inline, so all four are readable without opening
+  anything, and each offers the choices Windows itself offers — 1 to 45 minutes, 1 to 5
+  hours, and Never.
+- **Always the live values.** The menu is rebuilt from the *active* power scheme every
+  time it opens, so changes made by the Settings app, by `powercfg`, or by switching power
+  plans are already there. A timeout that is not one of the presets — say 7 minutes, set
+  by something else — is shown at the top, ticked, rather than leaving nothing selected.
+- **A moon that is also the battery gauge.** Described below.
+- **Start with Windows.** A checkbox, and nothing more than a per-user `Run` entry.
+- **Nothing to install, nothing left behind.** One 94 KB executable, no runtime, no
+  elevation, no configuration file, and at most two registry values under HKCU.
 
-| Row | Changes |
+Either mouse button opens the menu. Launching SleepPicker while it is already running
+opens the menu rather than adding a second icon.
+
+## The moon
+
+The tray icon *is* the charge: a full moon at 100%, waning through gibbous and half to a
+thin crescent, and to nothing when the battery is flat. Hovering it reports the figure
+exactly.
+
+![Every phase the tray icon can draw, 0% to 100%: at 48px, then at tray size waning, then waxing](docs/moon-phases.png)
+
+Which way the charge is going is drawn the way the sky draws it. A waning moon is lit on
+one limb and a waxing moon on the other, so the icon mirrors itself when the machine goes
+on mains — the same phase, running the other way.
+
+| On battery — waning | On mains — waxing |
 | --- | --- |
-| Screen off on battery | Turn off the display after, on battery |
-| Screen off when plugged in | Turn off the display after, plugged in |
-| Sleep on battery | Put the PC to sleep after, on battery |
-| Sleep when plugged in | Put the PC to sleep after, plugged in |
+| ![The tray icon at 35% on battery, lit on its lower left](docs/tray-battery.png) | ![The same 35% on mains, lit on its lower right](docs/tray-mains.png) |
 
-Each row shows its current value inline, so all four are readable at a glance without
-opening anything. Each opens a submenu with the same choices Windows itself offers — 1, 2,
-3, 5, 10, 15, 20, 25, 30, 45 minutes, 1 to 5 hours, and Never — with a tick on the value
-currently in force.
+Both moons are drawn together whenever the charge moves, so the cable going in swaps a
+picture that is already in hand and the icon turns round as it happens rather than at some
+point in the next minute. Otherwise it redraws once a minute, which no battery moves
+faster than.
 
-Below them:
+Two details the arithmetic alone gets wrong. Below 20% the unlit limb fades in as a ring —
+real moons do this, lit by earthshine, and it means a flat battery leaves something in the
+tray to click on instead of an empty slot that reads as a program that has died. And the
+dark rim takes at most a quarter of the crescent's width rather than a fixed width, since
+at 16px a crescent is thinner than one pixel below about 15% charge and a fixed rim would
+swallow the gold whole.
 
-- **Start with Windows** — a checkbox that adds or removes a per-user entry under
-  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
-- **Dynamic tray icon** — a checkbox, on by default, described below.
-- **Exit** — quits and removes the icon.
-
-Either mouse button opens the menu. Launching SleepPicker while it is already running does
-not add a second icon; it opens the menu instead.
-
-## The dynamic tray icon
-
-With **Dynamic tray icon** ticked, the moon in the notification area shows how much charge
-is left: a full moon at 100%, waning through gibbous and half to a thin crescent, and to
-nothing at all when the battery is flat. Hovering it reports the figure exactly.
-
-![Every phase the tray icon can draw, 0% to 100%, large and at actual tray size](docs/moon-phases.png)
-
-The moon wanes the way the real one does — a full disc that thins into the same crescent
-the executable's own icon is drawn as. Below 20% the unlit limb starts to show as a faint
-ring, brightest at 0%: real moons do this too, lit by earthshine, and it means a flat
-battery leaves something in the tray to click on rather than an empty slot that looks like
-a program that has died.
-
-The icon redraws once a minute. A battery does not move faster than that, and it means the
-whole feature costs one timer tick an hour of anything measurable. Untick the option and
-the fixed artwork comes back.
-
-The phases are drawn rather than shipped: 101 levels at every size the shell can ask for
-would have added more to the executable than the rest of the program weighs, and still had
-nothing to show at a scaling factor nobody thought to bake. Two arcs cost nothing and are
-exact at any size. `tools\MakeMoonPhases.py` renders the same geometry to the sheet above,
-so the series can be looked at rather than only reasoned about:
+The phases are drawn, not shipped: 101 levels at every size the shell can ask for would
+have added more to the executable than the rest of the program weighs, and still had
+nothing to show at a scaling factor nobody thought to bake. Two arcs are exact at any
+size. `tools\MakeMoonPhases.py` renders the same geometry to the sheet above, so the
+series can be looked at rather than only reasoned about:
 
 ```cmd
 python tools\MakeMoonPhases.py
 ```
 
-### On machines without a battery
-
-The two "on battery" rows are hidden on a desktop, exactly as the Settings page hides them
-there, and so is **Dynamic tray icon** — there is no charge for it to show. Battery
-presence is re-checked each time the menu opens, so a tablet that gets undocked, or a
-laptop whose battery is removed, is handled without a restart.
-
-### Values set by something else
-
-Settings are read live from the **active** power scheme every time the menu opens, so
-changes made by the Settings app, by `powercfg`, or by switching power plans show up
-immediately. If the current timeout is not one of the offered choices — say another tool
-set it to 7 minutes — the submenu shows that value at the top, ticked, rather than
-appearing to have nothing selected.
+Untick **Dynamic tray icon** and the fixed artwork comes back. On a desktop the row is
+hidden, along with the two "on battery" rows — exactly as the Settings page hides them
+there. Battery presence is re-checked every time the menu opens, so an undocked tablet or
+a removed battery is handled without a restart.
 
 ## Install
 
 1. Download `SleepPicker.exe` from the
    [latest release](https://github.com/VladislavEkimtcov/SleepPicker/releases/latest).
-2. Put it anywhere you like — it is one file and writes nothing beside itself.
+2. Put it anywhere — it is one file and writes nothing beside itself.
 3. Run it. A gold crescent appears in the notification area.
 4. Optionally tick **Start with Windows**.
-
-No installer, no administrator rights, no runtime to install. Changing power timeouts does
-not require elevation, so SleepPicker never asks for it.
 
 To uninstall: untick **Start with Windows**, choose **Exit**, delete the file.
 
 > Windows hides new notification-area icons by default. If the moon does not appear, click
-> the `^` arrow next to the clock and drag it onto the taskbar, or allow it under
-> *Taskbar settings → Select which icons appear on the taskbar*.
-
-## Build from source
-
-```cmd
-build.cmd
-```
-
-That is the entire toolchain requirement. `build.cmd` uses the MSBuild that ships inside
-Windows (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe`), so it builds on a
-machine with no .NET SDK, no Visual Studio, no NuGet and no package manager. Output is
-`bin\SleepPicker.exe`, a single self-contained file.
-
-`warning MSB3644` ("reference assemblies … were not found") is expected and harmless: with
-no targeting packs installed, MSBuild resolves the framework references from the GAC
-instead, and the build succeeds.
-
-The icon is built from `assets\SleepPicker.png`, a crescent drawn on a solid white
-background. To regenerate `assets\SleepPicker.ico` after redrawing it:
-
-```cmd
-powershell.exe -ExecutionPolicy Bypass -File tools\MakeIcon.ps1
-```
-
-That keys the white out to transparency, scales the artwork down to the six sizes the
-shell asks for, and packs them into one `.ico` — with System.Drawing alone, since the
-target machines have no image editor.
+> the `^` arrow next to the clock and drag it onto the taskbar.
 
 ## Design constraints
 
@@ -133,55 +94,60 @@ code is written to, and which changes should keep to:
 - **Legacy, non-SDK-style `.csproj`.** `<Project Sdk="…">` requires the .NET SDK, which is
   not present.
 - **No NuGet packages**, ever — there is no restore.
-- **One self-contained `.exe`.** Framework references are marked `Private=False` so nothing
-  is copied beside it.
-- **Never require elevation.** The manifest requests `asInvoker`.
-- **Autostart through the per-user Run key**, not a service or scheduled task: no admin
-  rights needed, and a tray icon has to run in the interactive session anyway.
-- **Write nothing outside the user profile.** SleepPicker writes at most two registry
-  values, and only when you change a checkbox away from its default. Turning **Dynamic
-  tray icon** back on deletes its value, and the key with it.
+- **One self-contained `.exe`.** Framework references are marked `Private=False` so
+  nothing is copied beside it.
+- **Never require elevation.** The manifest requests `asInvoker`. Changing power timeouts
+  does not need admin rights, so SleepPicker never asks for them.
+- **Autostart through the per-user Run key**, not a service or scheduled task.
+- **Write nothing outside the user profile**, and as little as possible inside it: turning
+  **Dynamic tray icon** back on deletes its value, and the key with it.
+
+## Build from source
+
+```cmd
+build.cmd
+```
+
+That is the entire toolchain requirement. `build.cmd` uses the MSBuild that ships inside
+Windows (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe`), so it builds on a
+machine with no .NET SDK, no Visual Studio, no NuGet and no package manager. Output is
+`bin\SleepPicker.exe`. `warning MSB3644` is expected and harmless: with no targeting packs
+installed, MSBuild resolves the framework references from the GAC instead.
+
+The embedded icon is built from `assets\SleepPicker.png`, a crescent drawn on white. To
+regenerate it after redrawing:
+
+```cmd
+powershell.exe -ExecutionPolicy Bypass -File tools\MakeIcon.ps1
+```
 
 ## How it works
 
 Timeouts are read and written through the Win32 power API in `powrprof.dll` —
-`PowerGetActiveScheme`, `PowerRead{AC,DC}ValueIndex`, `PowerWrite{AC,DC}ValueIndex` — rather
-than by driving `powercfg.exe`. That avoids screen-scraping localised console output, and
-works on any UI language. A write is followed by `PowerSetActiveScheme`, without which the
-new value sits in the scheme without taking effect.
+`PowerGetActiveScheme`, `PowerRead{AC,DC}ValueIndex`, `PowerWrite{AC,DC}ValueIndex` —
+rather than by driving `powercfg.exe`, whose output is localised and would have to be
+screen-scraped. A write is followed by `PowerSetActiveScheme`, without which the new value
+sits in the scheme without taking effect. The settings are the standard ones:
+`SUB_VIDEO`/`VIDEOIDLE` and `SUB_SLEEP`/`STANDBYIDLE`.
 
-The settings themselves are the standard ones:
-
-| Setting | Subgroup GUID | Setting GUID |
-| --- | --- | --- |
-| Turn off display after | `SUB_VIDEO` `7516b95f-…` | `VIDEOIDLE` `3c0bc021-…` |
-| Sleep after | `SUB_SLEEP` `238c9fa8-…` | `STANDBYIDLE` `29f6c1db-…` |
-
-Whether there is a battery, and how much is left in it, both come from one
-`GetSystemPowerStatus` call. It reports 255 for a charge it does not know — which is what
-virtual machines and some docks give back — and that case falls back to the fixed icon
-rather than drawing 255% of a moon.
-
-## Layout
+Whether there is a battery, how much is left in it, and whether the machine is on mains
+all come from one `GetSystemPowerStatus` call — one call, so the charge and the power
+source cannot disagree and draw a moon that was never true. It reports 255 for a charge it
+does not know, which is what virtual machines and some docks give back; that falls back to
+the fixed icon rather than drawing 255% of a moon.
 
 ```
-SleepPicker.csproj   legacy MSBuild 4.0 project
-build.cmd            build with the in-box MSBuild
 src/
   Program.cs         entry point and single-instance guard
   TrayApp.cs         the notification icon and its menu
   PowerSettings.cs   powrprof.dll interop
   PowerTarget.cs     one setting on one power source
-  MoonIcon.cs        draws the moon at a given phase
+  MoonIcon.cs        draws the moon at a given phase, waning or waxing
   Settings.cs        the dynamic-icon preference, under HKCU
   AutoStart.cs       the Run-key checkbox
   SingleInstance.cs  mutex plus "show the menu" signal
-  app.manifest       asInvoker, per-monitor DPI, visual styles
-assets/
-  SleepPicker.png    the artwork, drawn on white
-  SleepPicker.ico    generated from it, embedded in the exe
 tools/
-  MakeIcon.ps1       regenerates the .ico from the .png
+  MakeIcon.ps1       regenerates the .ico from assets/SleepPicker.png
   MakeMoonPhases.py  renders docs/moon-phases.png from MoonIcon.cs's geometry
 bin/SleepPicker.exe  the build, committed so it can just be downloaded
 ```
