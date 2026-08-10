@@ -4,6 +4,7 @@ obj/
 *.pdb
 *.suo
 *.user
+__pycache__/
 
 # Local working files, not part of the project.
 task.md

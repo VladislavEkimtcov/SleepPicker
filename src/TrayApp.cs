@@ -13,12 +13,33 @@ namespace SleepPicker
     /// </summary>
     internal sealed class TrayApp : ApplicationContext
     {
+        /// <summary>
+        /// How often the moon is redrawn. A battery moves by one percent every few
+        /// minutes at best, so anything faster would be redrawing the same picture; a
+        /// minute is also short enough that the icon is never visibly stale.
+        /// </summary>
+        private const int RefreshIntervalMilliseconds = 60 * 1000;
+
         private readonly NotifyIcon _notifyIcon;
         private readonly ContextMenuStrip _menu;
         private readonly ToolStripMenuItem[] _targetItems;
         private readonly ToolStripMenuItem _autoStartItem;
+        private readonly ToolStripMenuItem _dynamicIconItem;
         private readonly SingleInstance _singleInstance;
         private readonly SynchronizationContext _uiContext;
+
+        /// <summary>The fixed artwork, shown whenever the moon is not.</summary>
+        private readonly Icon _staticIcon;
+        // Qualified: System.Threading also has a Timer, and this one has to tick on the UI
+        // thread, where the icon can be swapped without marshalling.
+        private readonly System.Windows.Forms.Timer _refreshTimer;
+
+        /// <summary>The moon currently in the notification area, owned here, or null.</summary>
+        private Icon _moonIcon;
+
+        // What the moon on screen was drawn for, so an unchanged charge costs nothing.
+        private int _shownPercent = -1;
+        private int _shownSize = -1;
 
         public TrayApp(SingleInstance singleInstance)
         {
@@ -47,17 +68,29 @@ namespace SleepPicker
             _autoStartItem.Click += OnAutoStartClick;
             _menu.Items.Add(_autoStartItem);
 
+            _dynamicIconItem = new ToolStripMenuItem("Dynamic tray icon");
+            _dynamicIconItem.ToolTipText = "Show the battery charge as the moon's phase.";
+            _dynamicIconItem.Click += OnDynamicIconClick;
+            _menu.Items.Add(_dynamicIconItem);
+
             ToolStripMenuItem exitItem = new ToolStripMenuItem("Exit");
             exitItem.Click += OnExitClick;
             _menu.Items.Add(exitItem);
 
+            _staticIcon = LoadTrayIcon();
+
             _notifyIcon = new NotifyIcon();
-            _notifyIcon.Icon = LoadTrayIcon();
             _notifyIcon.Text = "SleepPicker";
             _notifyIcon.ContextMenuStrip = _menu;
             // Left-click opens the same menu, so either button works.
             _notifyIcon.MouseUp += OnIconMouseUp;
+            RefreshIcon();
             _notifyIcon.Visible = true;
+
+            _refreshTimer = new System.Windows.Forms.Timer();
+            _refreshTimer.Interval = RefreshIntervalMilliseconds;
+            _refreshTimer.Tick += OnRefreshTick;
+            _refreshTimer.Enabled = IsMoonWanted();
         }
 
         /// <summary>
@@ -71,10 +104,91 @@ namespace SleepPicker
             {
                 if (stream == null)
                 {
-                    return SystemIcons.Application;
+                    // Cloned so the caller can dispose it like any other icon we made.
+                    return (Icon)SystemIcons.Application.Clone();
                 }
                 return new Icon(stream, SystemInformation.SmallIconSize);
             }
+        }
+
+        /// <summary>
+        /// Whether the moon should be drawn at all: only when it is switched on and there
+        /// is a battery whose charge it could be showing.
+        /// </summary>
+        private static bool IsMoonWanted()
+        {
+            return Settings.DynamicTrayIcon && PowerSettings.HasBattery();
+        }
+
+        /// <summary>
+        /// Puts the right picture in the notification area. Redrawing is skipped when
+        /// neither the charge nor the icon size has moved, which is the usual case: the
+        /// timer fires sixty times for every percent the battery actually loses.
+        /// </summary>
+        private void RefreshIcon()
+        {
+            int percent;
+            if (!Settings.DynamicTrayIcon || !PowerSettings.TryGetBatteryPercent(out percent))
+            {
+                ShowStaticIcon();
+                return;
+            }
+
+            // Re-read rather than cached: the notification area asks for a different size
+            // when the display's scaling changes, and that can happen while we run.
+            int size = SystemInformation.SmallIconSize.Width;
+            if (_moonIcon != null && percent == _shownPercent && size == _shownSize)
+            {
+                return;
+            }
+
+            Icon moon;
+            try
+            {
+                moon = MoonIcon.Create(percent, size);
+            }
+            catch (Exception)
+            {
+                // Drawing needs a GDI+ bitmap, which can fail when the session is starved
+                // of handles. The fixed artwork always works, so fall back to it.
+                ShowStaticIcon();
+                return;
+            }
+
+            // The old icon is released only once the new one is on screen: the shell is
+            // holding that handle until it has been handed a replacement.
+            Icon previous = _moonIcon;
+            _moonIcon = moon;
+            _notifyIcon.Icon = moon;
+            _notifyIcon.Text = "SleepPicker — " + percent.ToString() + "% battery";
+            _shownPercent = percent;
+            _shownSize = size;
+
+            if (previous != null)
+            {
+                previous.Dispose();
+            }
+        }
+
+        private void ShowStaticIcon()
+        {
+            _shownPercent = -1;
+            _shownSize = -1;
+            if (!ReferenceEquals(_notifyIcon.Icon, _staticIcon))
+            {
+                _notifyIcon.Icon = _staticIcon;
+                _notifyIcon.Text = "SleepPicker";
+            }
+            if (_moonIcon != null)
+            {
+                _moonIcon.Dispose();
+                _moonIcon = null;
+            }
+        }
+
+        private void OnRefreshTick(object sender, EventArgs e)
+        {
+            RefreshIcon();
         }
 
         /// <summary>
@@ -118,6 +232,16 @@ namespace SleepPicker
             }
 
             _autoStartItem.Checked = AutoStart.IsEnabled();
+
+            // A moon that tracks the charge means nothing on a desktop, so the row is
+            // hidden there alongside the two "on battery" rows above it.
+            _dynamicIconItem.Visible = hasBattery;
+            _dynamicIconItem.Checked = Settings.DynamicTrayIcon;
+
+            // Opening the menu is also when a battery that appeared since the last look --
+            // a tablet back in its dock -- gets noticed.
+            _refreshTimer.Enabled = Settings.DynamicTrayIcon && hasBattery;
+            RefreshIcon();
         }
 
         private void FillChoices(ToolStripMenuItem parent, PowerTarget target, uint current)
@@ -195,6 +319,24 @@ namespace SleepPicker
             }
         }
 
+        private void OnDynamicIconClick(object sender, EventArgs e)
+        {
+            try
+            {
+                Settings.DynamicTrayIcon = !Settings.DynamicTrayIcon;
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the dynamic-tray-icon setting: " + ex.Message);
+                return;
+            }
+
+            // Swapped straight away rather than at the next tick, so the tick box and the
+            // icon never disagree.
+            _refreshTimer.Enabled = IsMoonWanted();
+            RefreshIcon();
+        }
+
         private void OnIconMouseUp(object sender, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Left)
@@ -249,6 +391,7 @@ namespace SleepPicker
         protected override void ExitThreadCore()
         {
             // Hide first, or the icon lingers in the notification area until hovered.
+            _refreshTimer.Enabled = false;
             _notifyIcon.Visible = false;
             base.ExitThreadCore();
         }
@@ -258,8 +401,15 @@ namespace SleepPicker
             if (disposing)
             {
                 _singleInstance.ShowMenuRequested -= OnShowMenuRequested;
+                _refreshTimer.Dispose();
                 _notifyIcon.Dispose();
                 _menu.Dispose();
+                if (_moonIcon != null)
+                {
+                    _moonIcon.Dispose();
+                    _moonIcon = null;
+                }
+                _staticIcon.Dispose();
             }
             base.Dispose(disposing);
         }

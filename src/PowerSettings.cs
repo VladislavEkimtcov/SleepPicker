@@ -65,6 +65,30 @@ namespace SleepPicker
             return status.BatteryFlag != BatteryFlagNoBattery;
         }
 
+        /// <summary>
+        /// Charge remaining, 0 to 100. False when there is no battery, or when the
+        /// firmware does not report a level -- GetSystemPowerStatus answers 255 for
+        /// "unknown", which is what virtual machines and some docks give back, and a
+        /// caller must not draw 255% of a moon.
+        /// </summary>
+        public static bool TryGetBatteryPercent(out int percent)
+        {
+            percent = 0;
+
+            SystemPowerStatus status;
+            if (!NativeMethods.GetSystemPowerStatus(out status))
+            {
+                return false;
+            }
+            if (status.BatteryFlag == BatteryFlagNoBattery || status.BatteryLifePercent > 100)
+            {
+                return false;
+            }
+
+            percent = status.BatteryLifePercent;
+            return true;
+        }
+
         /// <summary>GUID of the power scheme currently in effect.</summary>
         public static Guid GetActiveScheme()
         {
