@@ -41,7 +41,8 @@ opens the menu rather than adding a second icon.
 
 The tray icon *is* the charge: a full moon at 100%, waning through gibbous and half to a
 thin crescent, and to nothing when the battery is flat. Hovering it reports the figure
-exactly.
+exactly, and how long the battery has left at the rate it is going — `74% battery,
+2 h 15 min left`, or `37 min to full` on the way back up.
 
 ![Every phase the tray icon can draw, 0% to 100%: at 48px, then at tray size waning, then waxing](docs/moon-phases.png)
 
@@ -75,9 +76,10 @@ series can be looked at rather than only reasoned about:
 python tools\MakeMoonPhases.py
 ```
 
-Untick **Dynamic tray icon** and the fixed artwork comes back. On a desktop the row is
-hidden, along with the two "on battery" rows — exactly as the Settings page hides them
-there. Battery presence is re-checked every time the menu opens, so an undocked tablet or
+Untick **Dynamic tray icon** and the fixed artwork comes back — though the hover keeps
+reporting charge and time, since the setting is about the picture and a tooltip is not
+one. On a desktop the row is hidden, along with the two "on battery" rows — exactly as
+the Settings page hides them there. Battery presence is re-checked every time the menu opens, so an undocked tablet or
 a removed battery is handled without a restart.
 
 ## Power mode
@@ -186,6 +188,18 @@ source cannot disagree and draw a moon that was never true. It reports 255 for a
 does not know, which is what virtual machines and some docks give back; that falls back to
 the fixed icon rather than drawing 255% of a moon.
 
+The time remaining comes from `CallNtPowerInformation(SystemBatteryState)`, in the same
+`powrprof.dll`. On battery it hands back Windows' own estimate — the one the battery
+flyout shows, smoothed over recent samples, where an instantaneous rate would swing with
+whatever the screen is doing. Charging is the harder half: **Windows publishes no
+time-to-full anywhere.** `GetSystemPowerStatus` returns −1 for it by definition, and
+WMI's `Win32_Battery.TimeToFullCharge` comes back empty on the machines that matter. So
+SleepPicker does the arithmetic Windows' own flyout does — what is left to put in,
+divided by the rate it is going in at, both of which that same call reports. When the
+rate is unknown or zero, which is a full battery or one a vendor is holding at 80%, the
+hover says "charging" rather than inventing a figure; anything over 24 hours, which is
+what a trickle at the end of a charge divides out to, is discarded the same way.
+
 ```
 src/
   Program.cs         entry point and single-instance guard
@@ -195,6 +209,7 @@ src/
   PowerModeSettings.cs  the power slider: overlay interop, and battery saver
   PowerMode.cs       one position of that slider
   MoonIcon.cs        draws the moon at a given phase, waning or waxing
+  BatteryReading.cs  one look at the battery: charge, power source, time remaining
   Settings.cs        the dynamic-icon preference, under HKCU
   AutoStart.cs       the Run-key checkbox
   BatteryMeter.cs    hides Windows' own battery icon, and restarts the shell to show it

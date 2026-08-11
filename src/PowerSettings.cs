@@ -31,6 +31,23 @@ namespace SleepPicker
         /// <summary>Mains power is connected. The other values are 0 (on battery) and 255 (unknown).</summary>
         private const byte AcLineOnline = 1;
 
+        /// <summary>SystemBatteryState, the one CallNtPowerInformation level used here.</summary>
+        private const int SystemBatteryStateLevel = 5;
+
+        private const uint StatusSuccess = 0;
+
+        // What the battery driver says instead of a number it does not have.
+        private const int BatteryUnknownRate = unchecked((int)0x80000000);
+        private const uint BatteryUnknownCapacity = 0xFFFFFFFF;
+        private const uint BatteryUnknownTime = 0xFFFFFFFF;
+
+        /// <summary>
+        /// The longest estimate worth repeating. Charging tapers off to a trickle as the
+        /// battery fills, and dividing what is left to do by a rate of a few milliwatts
+        /// gives days -- arithmetically sound and worthless to read.
+        /// </summary>
+        private const long LongestUsefulEstimate = 24 * 60 * 60;
+
         /// <summary>Timeout in seconds meaning "Never".</summary>
         public const uint Never = 0;
 
@@ -118,6 +135,118 @@ namespace SleepPicker
             percent = status.BatteryLifePercent;
             onMains = status.ACLineStatus == AcLineOnline;
             return true;
+        }
+
+        /// <summary>
+        /// One look at the battery, for the tray icon and its tooltip: the charge, the
+        /// power source, and the time remaining to whichever end the battery is heading
+        /// for. False in the same cases as <see cref="TryGetBatteryStatus"/> -- no
+        /// battery, or a charge the firmware will not name.
+        ///
+        /// Taken once per refresh and handed on, rather than each caller asking again:
+        /// two facts read a minute apart are two facts about two different moments.
+        ///
+        /// The time is the only part that needs a second call, and it is allowed to come
+        /// back missing without failing the whole reading -- the charge is worth showing
+        /// on its own, and an estimate is absent more often than not.
+        /// </summary>
+        public static bool TryRead(out BatteryReading reading)
+        {
+            reading = null;
+
+            int percent;
+            bool onMains;
+            if (!TryGetBatteryStatus(out percent, out onMains))
+            {
+                return false;
+            }
+
+            // Whichever end the time counts down to is the one the power source implies:
+            // ReadTimeRemaining answers nothing at all unless the battery agrees with it.
+            reading = new BatteryReading(percent, onMains, ReadTimeRemaining(onMains), onMains);
+            return true;
+        }
+
+        /// <summary>
+        /// Seconds until the battery is empty, or until it is full when on mains, or
+        /// <see cref="BatteryReading.Unknown"/>.
+        ///
+        /// CallNtPowerInformation rather than GetSystemPowerStatus, whose BatteryLifeTime
+        /// is the same estimate with none of the workings: this one also reports the
+        /// capacity and the rate, which is the only way to say anything at all about
+        /// charging.
+        /// </summary>
+        private static uint ReadTimeRemaining(bool onMains)
+        {
+            SystemBatteryState state;
+            uint size = (uint)Marshal.SizeOf(typeof(SystemBatteryState));
+            uint result = NativeMethods.CallNtPowerInformation(
+                SystemBatteryStateLevel, IntPtr.Zero, 0, out state, size);
+            if (result != StatusSuccess || state.BatteryPresent == 0)
+            {
+                return BatteryReading.Unknown;
+            }
+
+            // The power source has now been read twice -- once by the caller for the
+            // charge, once here -- and a cable moving in between would pair a time with
+            // the wrong end of the journey. Disagreement drops the estimate rather than
+            // showing it: the cable raises PowerModeChanged, which brings another reading
+            // along a moment later.
+            if ((state.AcOnLine != 0) != onMains)
+            {
+                return BatteryReading.Unknown;
+            }
+
+            if (!onMains)
+            {
+                // Windows' own estimate, and the one its battery flyout shows. Preferred
+                // to the arithmetic below because it is smoothed over recent samples,
+                // where an instantaneous rate swings with whatever the screen is doing.
+                if (state.EstimatedTime != BatteryUnknownTime)
+                {
+                    return Usable(state.EstimatedTime);
+                }
+                // Missing for the first minute or so after the cable comes out, before
+                // there are samples to smooth. Until then the rate answers on its own.
+                if (state.Rate == BatteryUnknownRate || state.Rate >= 0 ||
+                    state.RemainingCapacity == BatteryUnknownCapacity)
+                {
+                    return BatteryReading.Unknown;
+                }
+                return Usable((long)state.RemainingCapacity * 3600 / -(long)state.Rate);
+            }
+
+            // Charging has no estimate anywhere in Windows: not here, not in
+            // GetSystemPowerStatus, whose BatteryLifeTime is -1 on mains by definition,
+            // and not in WMI, whose Win32_Battery.TimeToFullCharge comes back empty on the
+            // machines that matter. Windows' own flyout divides what is left to put in by
+            // the rate it is going in at, so that is what this does.
+            //
+            // A battery reporting relative units rather than milliwatt-hours needs no
+            // special case: its rate is in those same units per hour, and this is a ratio.
+            if (state.Rate == BatteryUnknownRate || state.Rate <= 0 ||
+                state.MaxCapacity == BatteryUnknownCapacity ||
+                state.RemainingCapacity == BatteryUnknownCapacity ||
+                state.RemainingCapacity >= state.MaxCapacity)
+            {
+                // A full battery, or one a vendor is holding at 80%, is taking nothing in
+                // and will never fill. It has no time to report, only "charging".
+                return BatteryReading.Unknown;
+            }
+            return Usable(((long)state.MaxCapacity - state.RemainingCapacity) * 3600 / state.Rate);
+        }
+
+        /// <summary>
+        /// An estimate, unless it is too far off to mean anything -- see
+        /// <see cref="LongestUsefulEstimate"/>.
+        /// </summary>
+        private static uint Usable(long seconds)
+        {
+            if (seconds <= 0 || seconds > LongestUsefulEstimate)
+            {
+                return BatteryReading.Unknown;
+            }
+            return (uint)seconds;
         }
 
         /// <summary>
@@ -244,6 +373,32 @@ namespace SleepPicker
             return seconds == 1 ? "1 second" : seconds.ToString() + " seconds";
         }
 
+        /// <summary>
+        /// Renders a time remaining, rounded to the minute: "2 h 15 min", "3 h", "45 min".
+        /// Not <see cref="Describe"/>, which renders the exact multiples the timeout
+        /// dropdowns are made of and would call an estimate of 8123 seconds "8123 seconds".
+        /// </summary>
+        public static string DescribeRemaining(uint seconds)
+        {
+            uint minutes = (seconds + 30) / 60;
+            if (minutes == 0)
+            {
+                // Rounding has taken the last half-minute down to nothing, and "0 min"
+                // reads as a battery that has already gone rather than one about to.
+                minutes = 1;
+            }
+            if (minutes < 60)
+            {
+                return minutes.ToString() + " min";
+            }
+
+            uint hours = minutes / 60;
+            minutes = minutes % 60;
+            return minutes == 0
+                ? hours.ToString() + " h"
+                : hours.ToString() + " h " + minutes.ToString() + " min";
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         private struct SystemPowerStatus
         {
@@ -253,6 +408,33 @@ namespace SleepPicker
             public byte SystemStatusFlag;
             public int BatteryLifeTime;
             public int BatteryFullLifeTime;
+        }
+
+        /// <summary>
+        /// SYSTEM_BATTERY_STATE. The three BOOLEAN spares are named rather than skipped
+        /// because the fields after them are only in the right place if every byte before
+        /// them is accounted for.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SystemBatteryState
+        {
+            public byte AcOnLine;
+            public byte BatteryPresent;
+            public byte Charging;
+            public byte Discharging;
+            public byte Spare1;
+            public byte Spare2;
+            public byte Spare3;
+            public byte Tag;
+            /// <summary>Capacity when full, in mWh -- what the battery holds now, not when new.</summary>
+            public uint MaxCapacity;
+            public uint RemainingCapacity;
+            /// <summary>Milliwatts: positive going in, negative coming out.</summary>
+            public int Rate;
+            /// <summary>Seconds until empty. Unknown while on mains.</summary>
+            public uint EstimatedTime;
+            public uint DefaultAlert1;
+            public uint DefaultAlert2;
         }
 
         private static class NativeMethods
@@ -286,6 +468,11 @@ namespace SleepPicker
             [DllImport("powrprof.dll", ExactSpelling = true)]
             public static extern uint PowerWriteDCValueIndex(IntPtr rootPowerKey, ref Guid schemeGuid,
                 ref Guid subGroupGuid, ref Guid powerSettingGuid, uint value);
+
+            [DllImport("powrprof.dll", ExactSpelling = true)]
+            public static extern uint CallNtPowerInformation(int informationLevel,
+                IntPtr inputBuffer, uint inputBufferLength,
+                out SystemBatteryState outputBuffer, uint outputBufferLength);
 
             [DllImport("kernel32.dll", ExactSpelling = true)]
             public static extern IntPtr LocalFree(IntPtr handle);

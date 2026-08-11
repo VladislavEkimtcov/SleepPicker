@@ -125,7 +125,7 @@ namespace SleepPicker
             _refreshTimer = new System.Windows.Forms.Timer();
             _refreshTimer.Interval = RefreshIntervalMilliseconds;
             _refreshTimer.Tick += OnRefreshTick;
-            _refreshTimer.Enabled = IsMoonWanted();
+            _refreshTimer.Enabled = IsRefreshWanted();
 
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
         }
@@ -149,28 +149,51 @@ namespace SleepPicker
         }
 
         /// <summary>
-        /// Whether the moon should be drawn at all: only when it is switched on and there
-        /// is a battery whose charge it could be showing.
+        /// Whether there is anything to refresh: a battery to report on. Not tied to the
+        /// dynamic icon, because the tooltip reports the charge and the time remaining
+        /// whether the moon is drawn or the fixed artwork is -- that setting is about the
+        /// picture, and a hover is not a picture.
         /// </summary>
-        private static bool IsMoonWanted()
+        private static bool IsRefreshWanted()
         {
-            return Settings.DynamicTrayIcon && PowerSettings.HasBattery();
+            return PowerSettings.HasBattery();
         }
 
         /// <summary>
-        /// Puts the right picture in the notification area. Redrawing is skipped when
-        /// neither the charge nor the icon size has moved, which is the usual case: the
-        /// timer fires sixty times for every percent the battery actually loses.
+        /// Puts the right picture and the right words in the notification area, both from
+        /// one reading of the battery: an icon and a tooltip that disagreed would be worse
+        /// than either being a minute stale.
         /// </summary>
         private void RefreshIcon()
         {
-            int percent;
-            bool onMains;
-            if (!Settings.DynamicTrayIcon || !PowerSettings.TryGetBatteryStatus(out percent, out onMains))
+            // Null for a desktop, or a charge the firmware will not name: the two halves
+            // below fall back to the fixed artwork and the bare name between them.
+            BatteryReading reading;
+            if (!PowerSettings.TryRead(out reading))
+            {
+                reading = null;
+            }
+
+            UpdateIcon(reading);
+            UpdateTooltip(reading);
+        }
+
+        /// <summary>
+        /// Draws the moon for the charge just read, or falls back to the fixed artwork.
+        /// Redrawing is skipped when neither the charge nor the icon size has moved, which
+        /// is the usual case: the timer fires sixty times for every percent the battery
+        /// actually loses.
+        /// </summary>
+        private void UpdateIcon(BatteryReading reading)
+        {
+            if (!Settings.DynamicTrayIcon || reading == null)
             {
                 ShowStaticIcon();
                 return;
             }
+
+            int percent = reading.Percent;
+            bool onMains = reading.OnMains;
 
             // Re-read rather than cached: the notification area asks for a different size
             // when the display's scaling changes, and that can happen while we run.
@@ -222,13 +245,6 @@ namespace SleepPicker
                 _notifyIcon.Icon = wanted;
             }
 
-            string text = "SleepPicker — " + percent.ToString() + "% battery" +
-                (onMains ? ", charging" : "");
-            if (_notifyIcon.Text != text)
-            {
-                _notifyIcon.Text = text;
-            }
-
             if (staleWaning != null)
             {
                 staleWaning.Dispose();
@@ -239,6 +255,42 @@ namespace SleepPicker
             }
         }
 
+        /// <summary>
+        /// What the tooltip says about the battery just read: the charge, and how long it
+        /// has at the rate it is going.
+        ///
+        /// "to full" already says the machine is charging, so the word is not repeated;
+        /// on mains without an estimate -- a full battery, or one a vendor is holding at
+        /// 80% -- "charging" is all there is to say. Every assignment hands the shell a
+        /// fresh notification, so the text is compared before it is set.
+        /// </summary>
+        private void UpdateTooltip(BatteryReading reading)
+        {
+            string text;
+            if (reading == null)
+            {
+                text = "SleepPicker";
+            }
+            else
+            {
+                text = "SleepPicker — " + reading.Percent.ToString() + "% battery";
+                if (reading.HasTime)
+                {
+                    text += ", " + PowerSettings.DescribeRemaining(reading.Seconds) +
+                        (reading.ToFull ? " to full" : " left");
+                }
+                else if (reading.OnMains)
+                {
+                    text += ", charging";
+                }
+            }
+
+            if (_notifyIcon.Text != text)
+            {
+                _notifyIcon.Text = text;
+            }
+        }
+
         private void ShowStaticIcon()
         {
             _shownPercent = -1;
@@ -246,7 +298,6 @@ namespace SleepPicker
             if (!ReferenceEquals(_notifyIcon.Icon, _staticIcon))
             {
                 _notifyIcon.Icon = _staticIcon;
-                _notifyIcon.Text = "SleepPicker";
             }
             if (_waningMoon != null)
             {
@@ -360,7 +411,7 @@ namespace SleepPicker
 
             // Opening the menu is also when a battery that appeared since the last look --
             // a tablet back in its dock -- gets noticed.
-            _refreshTimer.Enabled = Settings.DynamicTrayIcon && hasBattery;
+            _refreshTimer.Enabled = hasBattery;
             RefreshIcon();
         }
 
@@ -541,7 +592,7 @@ namespace SleepPicker
 
             // Swapped straight away rather than at the next tick, so the tick box and the
             // icon never disagree.
-            _refreshTimer.Enabled = IsMoonWanted();
+            _refreshTimer.Enabled = IsRefreshWanted();
             RefreshIcon();
         }
 
