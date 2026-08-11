@@ -26,9 +26,12 @@ anywhere: click the moon in the notification area, pick a time.
   both of those in a dialog and does nothing at all unless you agree; on a desktop the row
   is hidden, like the moon row. While it is on, Windows greys out its own **Power** toggle
   in Settings → Taskbar, so unticking here is the way back.
+- **The power mode slider, given somewhere to live.** Hiding Windows' battery icon also
+  hides the only place Windows 10 offers the power slider, so SleepPicker puts those four
+  modes in the menu — but only while the icon is hidden. Described below.
 - **Start with Windows.** A checkbox, and nothing more than a per-user `Run` entry.
 - **Nothing to install, nothing left behind.** One 100 KB executable, no runtime, no
-  configuration file, and at most three registry values under HKCU. Nothing is elevated
+  configuration file, and at most four registry values under HKCU. Nothing is elevated
   except the one optional change above, and only at the moment you ask for it.
 
 Either mouse button opens the menu. Launching SleepPicker while it is already running
@@ -76,6 +79,26 @@ Untick **Dynamic tray icon** and the fixed artwork comes back. On a desktop the 
 hidden, along with the two "on battery" rows — exactly as the Settings page hides them
 there. Battery presence is re-checked every time the menu opens, so an undocked tablet or
 a removed battery is handled without a restart.
+
+## Power mode
+
+Windows 10 keeps its power slider — *Power mode (on battery)* — in the flyout that hangs
+off the battery icon, and nowhere else. There is no Settings page for it. So switching that
+icon off takes the slider with it, and **Power Mode** appears in the menu exactly when that
+happens: tick **Hide the Windows battery icon** and the row is there, untick it and the row
+goes, because Windows is offering the slider again.
+
+![The Power Mode submenu open beside the tray menu, with Best performance ticked](docs/power-mode.png)
+
+The four entries are the four notches of the slider. The row names the power source it is
+talking about, as the flyout does, because Windows stores the mode per source — one mode on
+battery, another on mains — and a click only changes the one you are running on. **Battery
+saver** is offered on battery only, exactly as the slider drops its leftmost notch when the
+machine is plugged in.
+
+What the row reports is the mode **in force**, not the one last picked. Windows lowers the
+mode by itself as a battery runs down, and a menu that echoed your last click back at you
+would be describing a machine that no longer exists.
 
 ## Install
 
@@ -142,8 +165,23 @@ screen-scraped. A write is followed by `PowerSetActiveScheme`, without which the
 sits in the scheme without taking effect. The settings are the standard ones:
 `SUB_VIDEO`/`VIDEOIDLE` and `SUB_SLEEP`/`STANDBYIDLE`.
 
-Whether there is a battery, how much is left in it, and whether the machine is on mains
-all come from one `GetSystemPowerStatus` call — one call, so the charge and the power
+The power modes are overlays — a set of tweaks laid over the active scheme without changing
+it — set with `PowerSetActiveOverlayScheme` and read back with
+`PowerGetEffectiveOverlayScheme`. Those exports are undocumented but have been present since
+Windows 10 1709; SleepPicker probes for them once and hides the row where they are missing.
+*Effective*, not *actual*, is what the menu shows, for the reason given above. "Better
+performance" is no overlay at all — the active scheme left to speak for itself, which is
+what Windows treats as the recommended position.
+
+Battery saver is the one mode Windows exposes no API for whatsoever. It comes on when the
+charge is at or below the energy-saver *charge level*, so SleepPicker switches it on by
+raising that level to 100 — no charge is above 100 — and off by putting the level back.
+What it was is written down under HKCU first, because the level is the only trace: a 100
+left behind by a crash would keep battery saver on for good with nothing left to say why.
+Picking any other mode puts it back and removes the note.
+
+Whether there is a battery, how much is left in it, whether the machine is on mains, and
+whether battery saver is running all come from one `GetSystemPowerStatus` call — one call, so the charge and the power
 source cannot disagree and draw a moon that was never true. It reports 255 for a charge it
 does not know, which is what virtual machines and some docks give back; that falls back to
 the fixed icon rather than drawing 255% of a moon.
@@ -154,6 +192,8 @@ src/
   TrayApp.cs         the notification icon and its menu
   PowerSettings.cs   powrprof.dll interop
   PowerTarget.cs     one setting on one power source
+  PowerModeSettings.cs  the power slider: overlay interop, and battery saver
+  PowerMode.cs       one position of that slider
   MoonIcon.cs        draws the moon at a given phase, waning or waxing
   Settings.cs        the dynamic-icon preference, under HKCU
   AutoStart.cs       the Run-key checkbox

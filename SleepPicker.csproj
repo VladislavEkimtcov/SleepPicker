@@ -66,6 +66,8 @@
     <Compile Include="src\TrayApp.cs" />
     <Compile Include="src\PowerSettings.cs" />
     <Compile Include="src\PowerTarget.cs" />
+    <Compile Include="src\PowerMode.cs" />
+    <Compile Include="src\PowerModeSettings.cs" />
     <Compile Include="src\MoonIcon.cs" />
     <Compile Include="src\Settings.cs" />
     <Compile Include="src\AutoStart.cs" />

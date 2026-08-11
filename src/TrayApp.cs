@@ -26,6 +26,9 @@ namespace SleepPicker
         private readonly NotifyIcon _notifyIcon;
         private readonly ContextMenuStrip _menu;
         private readonly ToolStripMenuItem[] _targetItems;
+        private readonly ToolStripMenuItem _powerModeItem;
+        /// <summary>Hidden with the row above it, so the menu never shows two dividers running.</summary>
+        private readonly ToolStripSeparator _powerModeSeparator;
         private readonly ToolStripMenuItem _autoStartItem;
         private readonly ToolStripMenuItem _dynamicIconItem;
         private readonly ToolStripMenuItem _hideBatteryMeterItem;
@@ -74,6 +77,19 @@ namespace SleepPicker
             }
 
             _menu.Items.Add(new ToolStripSeparator());
+
+            // Between the sleep rows and the application's own settings, because it belongs
+            // with the former: it is a Windows power setting, not a preference of ours.
+            _powerModeItem = new ToolStripMenuItem("Power Mode");
+            _powerModeItem.ToolTipText =
+                "The power slider from Windows' battery flyout — shown here because hiding " +
+                "the battery icon hides the only place Windows offers it.";
+            // Populated on open, like the timeout rows above.
+            _powerModeItem.DropDownItems.Add(new ToolStripMenuItem("(reading...)"));
+            _menu.Items.Add(_powerModeItem);
+
+            _powerModeSeparator = new ToolStripSeparator();
+            _menu.Items.Add(_powerModeSeparator);
 
             _autoStartItem = new ToolStripMenuItem("Start with Windows");
             _autoStartItem.Click += OnAutoStartClick;
@@ -308,6 +324,27 @@ namespace SleepPicker
                 FillChoices(item, target, current);
             }
 
+            // One reading of the power source for the whole row, so its label and its ticks
+            // cannot disagree about which way the machine is being powered.
+            int percent;
+            bool onMains;
+            bool statusKnown = PowerSettings.TryGetBatteryStatus(out percent, out onMains);
+
+            // Likewise one reading of the meter, so the Power Mode row and the tick box that
+            // governs it cannot contradict each other.
+            bool meterHidden = BatteryMeter.IsHidden();
+
+            // The row exists precisely when Windows' own does not: hiding the battery icon
+            // hides the flyout, and the flyout is the only place Windows 10 offers the
+            // slider. Read live, since the icon can be hidden from this very menu.
+            bool showPowerMode = hasBattery && meterHidden && PowerModeSettings.IsAvailable();
+            _powerModeItem.Visible = showPowerMode;
+            _powerModeSeparator.Visible = showPowerMode;
+            if (showPowerMode)
+            {
+                UpdatePowerMode(statusKnown, onMains);
+            }
+
             _autoStartItem.Checked = AutoStart.IsEnabled();
 
             // A moon that tracks the charge means nothing on a desktop, so the row is
@@ -319,7 +356,7 @@ namespace SleepPicker
             // the registry rather than remembered, because a policy or another tool can
             // set the same value.
             _hideBatteryMeterItem.Visible = hasBattery;
-            _hideBatteryMeterItem.Checked = BatteryMeter.IsHidden();
+            _hideBatteryMeterItem.Checked = meterHidden;
 
             // Opening the menu is also when a battery that appeared since the last look --
             // a tablet back in its dock -- gets noticed.
@@ -374,6 +411,94 @@ namespace SleepPicker
                 choice.Tag = new Choice(target, seconds);
                 choice.Click += OnChoiceClick;
                 parent.DropDownItems.Add(choice);
+            }
+        }
+
+        /// <summary>
+        /// Labels and fills the Power Mode row from the mode actually in force. Effective
+        /// rather than chosen, deliberately: Windows lowers the mode by itself as a battery
+        /// runs down, and the row is meant to report what the machine is doing.
+        /// </summary>
+        private void UpdatePowerMode(bool statusKnown, bool onMains)
+        {
+            // The mode is stored per power source, so the flyout names the source it is
+            // talking about and so does this. Left off when the source cannot be read,
+            // rather than guessed at.
+            string source = statusKnown ? (onMains ? " (plugged in)" : " (on battery)") : "";
+
+            Guid effectiveOverlay;
+            try
+            {
+                effectiveOverlay = PowerModeSettings.GetEffectiveOverlay();
+            }
+            catch (Exception)
+            {
+                _powerModeItem.Text = "Power Mode" + source + " — unavailable";
+                _powerModeItem.Enabled = false;
+                return;
+            }
+
+            _powerModeItem.Enabled = true;
+            PowerMode current = PowerModeSettings.GetEffectiveMode(effectiveOverlay);
+            string currentLabel = current != null
+                ? current.Label
+                : PowerModeSettings.DescribeOverlay(effectiveOverlay);
+
+            _powerModeItem.Text = "Power Mode" + source + " — " + currentLabel;
+            FillModes(_powerModeItem, current, currentLabel, statusKnown && onMains);
+        }
+
+        private void FillModes(ToolStripMenuItem parent, PowerMode current, string currentLabel, bool onMains)
+        {
+            // Dispose the previous generation of items; Clear() only detaches them.
+            ToolStripItem[] stale = new ToolStripItem[parent.DropDownItems.Count];
+            parent.DropDownItems.CopyTo(stale, 0);
+            parent.DropDownItems.Clear();
+            for (int i = 0; i < stale.Length; i++)
+            {
+                stale[i].Dispose();
+            }
+
+            // An overlay set by something else -- an OEM tool, or a power plan that brings
+            // its own -- is none of the four; show it rather than leaving nothing ticked,
+            // exactly as the timeout submenus do for a value that is not one of the presets.
+            if (current == null)
+            {
+                ToolStripMenuItem customItem = new ToolStripMenuItem(currentLabel + " (current)");
+                customItem.Checked = true;
+                customItem.Enabled = false;
+                parent.DropDownItems.Add(customItem);
+                parent.DropDownItems.Add(new ToolStripSeparator());
+            }
+
+            for (int i = 0; i < PowerModeSettings.All.Length; i++)
+            {
+                PowerMode mode = PowerModeSettings.All[i];
+
+                // Battery saver is not offered on mains, where Windows drops the notch too.
+                if (mode.RequiresBattery && onMains)
+                {
+                    continue;
+                }
+
+                ToolStripMenuItem choice = new ToolStripMenuItem(mode.Label);
+                choice.Checked = ReferenceEquals(mode, current);
+                choice.Tag = mode;
+                choice.Click += OnModeClick;
+                parent.DropDownItems.Add(choice);
+            }
+        }
+
+        private void OnModeClick(object sender, EventArgs e)
+        {
+            PowerMode mode = (PowerMode)((ToolStripMenuItem)sender).Tag;
+            try
+            {
+                PowerModeSettings.Apply(mode);
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the power mode to \"" + mode.Label + "\": " + ex.Message);
             }
         }
 

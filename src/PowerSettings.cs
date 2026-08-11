@@ -22,6 +22,8 @@ namespace SleepPicker
         private static readonly Guid VideoIdle = new Guid("3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e");
         private static readonly Guid SubSleep = new Guid("238c9fa8-0aad-41ed-83f4-97be242c8f20");
         private static readonly Guid StandbyIdle = new Guid("29f6c1db-86da-48c5-9fdb-f2b67b1f44da");
+        private static readonly Guid SubEnergySaver = new Guid("de830923-a562-41af-a086-e3a2c6bad2da");
+        private static readonly Guid EsBattThreshold = new Guid("e69653ca-cf7f-4f05-aa73-cb833fa90ad4");
 
         /// <summary>No system battery -- the machine is a desktop.</summary>
         private const byte BatteryFlagNoBattery = 128;
@@ -51,6 +53,22 @@ namespace SleepPicker
             new PowerTarget("Sleep on battery", SubSleep, StandbyIdle, false),
             new PowerTarget("Sleep when plugged in", SubSleep, StandbyIdle, true)
         };
+
+        /// <summary>
+        /// The charge, as a percentage, at or below which Windows switches battery saver on.
+        /// Not one of the <see cref="Targets"/>: it is not a timeout and has no row of its
+        /// own -- it is how <see cref="PowerMode"/> reaches battery saver, which Windows
+        /// exposes no API for. Hidden from "powercfg /query" output, but it reads and writes
+        /// like any other setting. DC only; battery saver never engages on mains.
+        /// </summary>
+        public static readonly PowerTarget EnergySaverThreshold =
+            new PowerTarget("Battery saver charge level", SubEnergySaver, EsBattThreshold, false);
+
+        /// <summary>
+        /// The threshold Windows uses when nothing has changed it -- 20 on a stock install.
+        /// Asked for rather than assumed, because an OEM image can ship a different one.
+        /// </summary>
+        public const uint DefaultEnergySaverThreshold = 20;
 
         /// <summary>
         /// Whether this machine has a battery. Re-checked on every menu open rather than
@@ -102,6 +120,22 @@ namespace SleepPicker
             return true;
         }
 
+        /// <summary>
+        /// Whether Windows is currently in battery saver. Read from the same
+        /// GetSystemPowerStatus call as everything else here rather than from a power
+        /// setting: the setting says when battery saver *should* come on, and this says
+        /// whether it actually is on, which is what the menu has to show.
+        /// </summary>
+        public static bool IsBatterySaverOn()
+        {
+            SystemPowerStatus status;
+            if (!NativeMethods.GetSystemPowerStatus(out status))
+            {
+                return false;
+            }
+            return status.SystemStatusFlag != 0;
+        }
+
         /// <summary>GUID of the power scheme currently in effect.</summary>
         public static Guid GetActiveScheme()
         {
@@ -141,19 +175,42 @@ namespace SleepPicker
         }
 
         /// <summary>
-        /// Sets a target's timeout, in seconds, on the active scheme. The write alone does
-        /// not take effect -- the scheme has to be re-applied afterwards, which is what
-        /// PowerSetActiveScheme does here.
+        /// The value Windows itself would use for a target, for putting one back the way it
+        /// was found when nothing better is remembered.
         /// </summary>
-        public static void Write(PowerTarget target, uint seconds)
+        public static uint ReadDefault(PowerTarget target)
+        {
+            Guid scheme = GetActiveScheme();
+            Guid subGroup = target.SubGroup;
+            Guid setting = target.Setting;
+            uint value;
+
+            uint result = target.IsAc
+                ? NativeMethods.PowerReadACDefaultIndex(IntPtr.Zero, ref scheme, ref subGroup, ref setting, out value)
+                : NativeMethods.PowerReadDCDefaultIndex(IntPtr.Zero, ref scheme, ref subGroup, ref setting, out value);
+
+            if (result != ErrorSuccess)
+            {
+                throw new Win32Exception((int)result, "Reading the power setting's default failed.");
+            }
+            return value;
+        }
+
+        /// <summary>
+        /// Sets a target's value on the active scheme -- a timeout in seconds for the four
+        /// <see cref="Targets"/>, a percentage for <see cref="EnergySaverThreshold"/>. The
+        /// write alone does not take effect -- the scheme has to be re-applied afterwards,
+        /// which is what PowerSetActiveScheme does here.
+        /// </summary>
+        public static void Write(PowerTarget target, uint value)
         {
             Guid scheme = GetActiveScheme();
             Guid subGroup = target.SubGroup;
             Guid setting = target.Setting;
 
             uint result = target.IsAc
-                ? NativeMethods.PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref subGroup, ref setting, seconds)
-                : NativeMethods.PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref subGroup, ref setting, seconds);
+                ? NativeMethods.PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref subGroup, ref setting, value)
+                : NativeMethods.PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref subGroup, ref setting, value);
 
             if (result != ErrorSuccess)
             {
@@ -212,6 +269,14 @@ namespace SleepPicker
 
             [DllImport("powrprof.dll", ExactSpelling = true)]
             public static extern uint PowerReadDCValueIndex(IntPtr rootPowerKey, ref Guid schemeGuid,
+                ref Guid subGroupGuid, ref Guid powerSettingGuid, out uint value);
+
+            [DllImport("powrprof.dll", ExactSpelling = true)]
+            public static extern uint PowerReadACDefaultIndex(IntPtr rootPowerKey, ref Guid schemeGuid,
+                ref Guid subGroupGuid, ref Guid powerSettingGuid, out uint value);
+
+            [DllImport("powrprof.dll", ExactSpelling = true)]
+            public static extern uint PowerReadDCDefaultIndex(IntPtr rootPowerKey, ref Guid schemeGuid,
                 ref Guid subGroupGuid, ref Guid powerSettingGuid, out uint value);
 
             [DllImport("powrprof.dll", ExactSpelling = true)]
