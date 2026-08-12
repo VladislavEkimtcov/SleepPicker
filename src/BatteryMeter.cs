@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Threading;
@@ -51,6 +52,20 @@ namespace SleepPicker
 
         /// <summary>How long to wait for the old shell to go.</summary>
         private const int ShellExitTimeoutMilliseconds = 5000;
+
+        /// <summary>
+        /// How many times to kill Explorer and try the icon caches again. More than one
+        /// because Windows races to put the shell back up, and a shell that wins the race
+        /// holds the caches open; three rounds has been enough every time.
+        /// </summary>
+        private const int PurgeAttempts = 3;
+
+        /// <summary>
+        /// How long to let the killed processes settle before reaching for the cache files.
+        /// Long enough that the handles are released, short enough that Windows has usually
+        /// not finished bringing the next shell up.
+        /// </summary>
+        private const int PurgeSettleMilliseconds = 500;
 
         /// <summary>
         /// How long to give Windows to put a new shell up before starting one by hand.
@@ -246,34 +261,38 @@ namespace SleepPicker
         /// Every notification-area icon goes with it, including ours; WinForms' NotifyIcon
         /// puts itself back when the shell broadcasts TaskbarCreated, so the moon returns
         /// on its own a moment later.
+        ///
+        /// The shell is killed rather than asked to leave, and that is deliberate. Windows
+        /// watches the process it made the shell and puts a new one up when it dies --
+        /// AutoRestartShell, which is on by default -- and that replacement is a real shell.
+        /// A shell that exits politely is replaced by nobody, and an explorer.exe started by
+        /// hand in its place opens a folder window instead of taking over, which leaves the
+        /// session with no taskbar at all. Being killed is what Explorer is built to survive.
+        ///
+        /// What was missing was the icon caches. TerminateProcess gives Explorer no chance to
+        /// finish writing iconcache_*.db, and a half-written cache is reloaded by every shell
+        /// that starts afterwards. With a transparent shortcut-arrow overlay set in
+        /// Shell Icons\29 that showed up as opaque black squares over every desktop icon,
+        /// surviving reboots because the damage was on disk rather than in the registry.
+        ///
+        /// So the caches are deleted here, in the only moment they are unlocked: after every
+        /// Explorer in the session is gone and before Windows has the next one up. That is a
+        /// race, hence the loop -- exactly what icons.ps1 does, which has never produced the
+        /// squares.
         /// </summary>
         public static void RestartExplorer()
         {
-            Process shell = FindShellProcess();
-            if (shell != null)
+            // Kill, then purge, and go round again if the files were still locked: Windows
+            // starts putting the shell back the moment it dies, and a shell that got there
+            // first holds the caches open.
+            bool purged = false;
+            int attempts = 0;
+            while (attempts < PurgeAttempts && !purged)
             {
-                using (shell)
-                {
-                    try
-                    {
-                        // Killed, rather than asked to leave through the shell's own
-                        // "exit Explorer" command. Windows watches the process it made the
-                        // shell and puts a new one up when it dies -- AutoRestartShell,
-                        // which is on by default -- and that replacement is a real shell.
-                        // A shell that exits politely is replaced by nobody, and an
-                        // explorer.exe started by hand in its place is handed off to
-                        // whatever Explorer process is still open for an open folder
-                        // instead of taking over, which leaves the session with no taskbar
-                        // at all. Being killed is what Explorer is built to survive.
-                        shell.Kill();
-                        shell.WaitForExit(ShellExitTimeoutMilliseconds);
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        // It had already gone. Nothing to kill, and the wait below still
-                        // holds: either a new shell is on its way or we start one.
-                    }
-                }
+                CloseSessionExplorers();
+                Thread.Sleep(PurgeSettleMilliseconds);
+                purged = ClearIconCache();
+                attempts++;
             }
 
             if (WaitForShell())
@@ -281,10 +300,110 @@ namespace SleepPicker
                 return;
             }
 
-            // Windows did not bring it back -- AutoRestartShell can be switched off, and on
-            // an image like this one it may well have been. Starting it by hand is the last
-            // resort, and it works when no other Explorer is left to swallow the request.
+            // AutoRestartShell can be switched off, and on an image like this one it may well
+            // have been. Starting it by hand is the last resort, and it works here because
+            // the loop above left no other Explorer to swallow the request.
             StartExplorer();
+        }
+
+        /// <summary>
+        /// Ends every Explorer in this session -- the shell and any folder window alike. The
+        /// folder windows have to go too: they hold the icon caches open, and one left running
+        /// is what absorbs a later explorer.exe instead of letting it become the shell. The
+        /// confirmation the user already agreed to says open windows will close.
+        /// </summary>
+        private static void CloseSessionExplorers()
+        {
+            Process[] explorers;
+            try
+            {
+                explorers = Process.GetProcessesByName("explorer");
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            int session = Process.GetCurrentProcess().SessionId;
+
+            foreach (Process explorer in explorers)
+            {
+                using (explorer)
+                {
+                    try
+                    {
+                        if (explorer.SessionId != session)
+                        {
+                            continue;
+                        }
+                        explorer.Kill();
+                        explorer.WaitForExit(ShellExitTimeoutMilliseconds);
+                    }
+                    catch (Exception)
+                    {
+                        // Gone already, or not ours to end.
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Deletes Explorer's rendered-icon caches, and says whether every one of them went.
+        /// False means something still held a file open and the caller should try again.
+        /// </summary>
+        private static bool ClearIconCache()
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrEmpty(localAppData))
+            {
+                return true;
+            }
+
+            bool allGone = true;
+
+            string explorerCache = Path.Combine(localAppData, @"Microsoft\Windows\Explorer");
+            try
+            {
+                if (Directory.Exists(explorerCache))
+                {
+                    foreach (string file in Directory.GetFiles(explorerCache, "iconcache*.db"))
+                    {
+                        allGone &= TryDeleteFile(file);
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Unreadable directory. Nothing here is worth an exception.
+            }
+
+            // Where Windows kept it before the per-size caches above.
+            allGone &= TryDeleteFile(Path.Combine(localAppData, "IconCache.db"));
+
+            return allGone;
+        }
+
+        /// <summary>Deletes one file, and says whether it is gone. Missing counts as gone.</summary>
+        private static bool TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+                return !File.Exists(path);
+            }
+            catch (IOException)
+            {
+                // Still locked.
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Hidden, read-only, or not ours.
+                return false;
+            }
         }
 
         /// <summary>
@@ -305,37 +424,6 @@ namespace SleepPicker
                 waited += ShellPollIntervalMilliseconds;
             }
             return NativeMethods.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero;
-        }
-
-        /// <summary>
-        /// The process owning the taskbar, or null when there is no taskbar. Found through
-        /// the window rather than by name: "explorer" also matches every open folder
-        /// window on a machine where folders run in their own processes.
-        /// </summary>
-        private static Process FindShellProcess()
-        {
-            IntPtr tray = NativeMethods.FindWindow("Shell_TrayWnd", null);
-            if (tray == IntPtr.Zero)
-            {
-                return null;
-            }
-
-            uint processId;
-            NativeMethods.GetWindowThreadProcessId(tray, out processId);
-            if (processId == 0)
-            {
-                return null;
-            }
-
-            try
-            {
-                return Process.GetProcessById((int)processId);
-            }
-            catch (ArgumentException)
-            {
-                // It exited between finding the window and asking about it.
-                return null;
-            }
         }
 
         /// <summary>
@@ -364,9 +452,6 @@ namespace SleepPicker
         {
             [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
             public static extern IntPtr FindWindow(string className, string windowName);
-
-            [DllImport("user32.dll", SetLastError = true)]
-            public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
         }
     }
 }
