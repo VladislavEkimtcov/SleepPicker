@@ -27,6 +27,7 @@ namespace SleepPicker
         private readonly ContextMenuStrip _menu;
         private readonly ToolStripMenuItem[] _targetItems;
         private readonly ToolStripMenuItem _powerModeItem;
+        private readonly ToolStripMenuItem _darkModeItem;
         /// <summary>Hidden with the row above it, so the menu never shows two dividers running.</summary>
         private readonly ToolStripSeparator _powerModeSeparator;
         private readonly ToolStripMenuItem _autoStartItem;
@@ -87,6 +88,12 @@ namespace SleepPicker
             // Populated on open, like the timeout rows above.
             _powerModeItem.DropDownItems.Add(new ToolStripMenuItem("(reading...)"));
             _menu.Items.Add(_powerModeItem);
+
+            // Alongside Power Mode: another system-level setting Windows keeps off its own
+            // Settings pages in any convenient form, offered here as a plain on/off tick.
+            _darkModeItem = new ToolStripMenuItem("Dark Mode");
+            _darkModeItem.Click += OnDarkModeClick;
+            _menu.Items.Add(_darkModeItem);
 
             _powerModeSeparator = new ToolStripSeparator();
             _menu.Items.Add(_powerModeSeparator);
@@ -396,6 +403,8 @@ namespace SleepPicker
                 UpdatePowerMode(statusKnown, onMains);
             }
 
+            _darkModeItem.Checked = DarkMode.IsEnabled();
+
             _autoStartItem.Checked = AutoStart.IsEnabled();
 
             // A moon that tracks the charge means nothing on a desktop, so the row is
@@ -550,6 +559,18 @@ namespace SleepPicker
             catch (Exception ex)
             {
                 ShowError("Could not change the power mode to \"" + mode.Label + "\": " + ex.Message);
+            }
+        }
+
+        private void OnDarkModeClick(object sender, EventArgs e)
+        {
+            try
+            {
+                DarkMode.SetEnabled(!DarkMode.IsEnabled());
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the Dark Mode setting: " + ex.Message);
             }
         }
 
