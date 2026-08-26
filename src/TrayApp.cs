@@ -29,8 +29,7 @@ namespace SleepPicker
         private readonly ToolStripMenuItem _powerModeItem;
         private readonly ToolStripMenuItem _darkModeItem;
         private readonly ToolStripMenuItem _autoBrightnessItem;
-        /// <summary>Hidden with the row above it, so the menu never shows two dividers running.</summary>
-        private readonly ToolStripSeparator _powerModeSeparator;
+        private readonly ToolStripMenuItem _mouseAccelerationItem;
         private readonly ToolStripMenuItem _autoStartItem;
         private readonly ToolStripMenuItem _dynamicIconItem;
         private readonly ToolStripMenuItem _hideBatteryMeterItem;
@@ -102,8 +101,15 @@ namespace SleepPicker
             _autoBrightnessItem.Click += OnAutoBrightnessClick;
             _menu.Items.Add(_autoBrightnessItem);
 
-            _powerModeSeparator = new ToolStripSeparator();
-            _menu.Items.Add(_powerModeSeparator);
+            _menu.Items.Add(new ToolStripSeparator());
+
+            _mouseAccelerationItem = new ToolStripMenuItem("Mouse acceleration");
+            _mouseAccelerationItem.ToolTipText =
+                "Enhance pointer precision — dynamically adjust pointer speed based on mouse movement.";
+            _mouseAccelerationItem.Click += OnMouseAccelerationClick;
+            _menu.Items.Add(_mouseAccelerationItem);
+
+            _menu.Items.Add(new ToolStripSeparator());
 
             _autoStartItem = new ToolStripMenuItem("Start with Windows");
             _autoStartItem.Click += OnAutoStartClick;
@@ -404,7 +410,6 @@ namespace SleepPicker
             // slider. Read live, since the icon can be hidden from this very menu.
             bool showPowerMode = hasBattery && meterHidden && PowerModeSettings.IsAvailable();
             _powerModeItem.Visible = showPowerMode;
-            _powerModeSeparator.Visible = showPowerMode;
             if (showPowerMode)
             {
                 UpdatePowerMode(statusKnown, onMains);
@@ -413,6 +418,8 @@ namespace SleepPicker
             _darkModeItem.Checked = DarkMode.IsEnabled();
 
             _autoBrightnessItem.Checked = AutoBrightness.IsEnabled();
+
+            _mouseAccelerationItem.Checked = MouseAcceleration.IsEnabled();
 
             _autoStartItem.Checked = AutoStart.IsEnabled();
 
@@ -592,6 +599,18 @@ namespace SleepPicker
             catch (Exception ex)
             {
                 ShowError("Could not change the Auto Brightness setting: " + ex.Message);
+            }
+        }
+
+        private void OnMouseAccelerationClick(object sender, EventArgs e)
+        {
+            try
+            {
+                MouseAcceleration.SetEnabled(!MouseAcceleration.IsEnabled());
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the Mouse acceleration setting: " + ex.Message);
             }
         }
 

@@ -75,6 +75,7 @@
     <Compile Include="src\BatteryMeter.cs" />
     <Compile Include="src\DarkMode.cs" />
     <Compile Include="src\AutoBrightness.cs" />
+    <Compile Include="src\MouseAcceleration.cs" />
     <Compile Include="src\SingleInstance.cs" />
     <Compile Include="src\Properties\AssemblyInfo.cs" />
   </ItemGroup>

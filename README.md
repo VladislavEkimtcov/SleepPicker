@@ -213,6 +213,9 @@ src/
   Settings.cs        the dynamic-icon preference, under HKCU
   AutoStart.cs       the Run-key checkbox
   BatteryMeter.cs    hides Windows' own battery icon, and restarts the shell to show it
+  DarkMode.cs        the light/dark app theme toggle
+  AutoBrightness.cs  the adaptive brightness toggle
+  MouseAcceleration.cs  the mouse acceleration ("Enhance pointer precision") toggle
   SingleInstance.cs  mutex plus "show the menu" signal
 tools/
   MakeIcon.ps1       regenerates the .ico from assets/SleepPicker.png
