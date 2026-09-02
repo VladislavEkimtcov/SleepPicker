@@ -1,0 +1,33 @@
+name: Release
+
+# Builds with the MSBuild that ships inside Windows itself -- exactly what build.cmd
+# does locally -- so a windows-latest runner with nothing else installed is enough.
+# Triggered by pushing a tag like v1.7.0; the tag becomes the release, and
+# bin\SleepPicker.exe becomes its one asset.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/SleepPicker.exe
+          generate_release_notes: true
+

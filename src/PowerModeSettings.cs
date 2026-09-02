@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace SleepPicker
 {
@@ -253,6 +254,96 @@ namespace SleepPicker
             }
             PowerSettings.Write(PowerSettings.EnergySaverThreshold, previous);
             Settings.ForgetForcedEnergySaverThreshold();
+        }
+
+        /// <summary>How often to re-check while waiting out <see cref="SuspendTimeoutMilliseconds"/>.</summary>
+        private const int SuspendPollIntervalMilliseconds = 50;
+
+        /// <summary>
+        /// The longest this waits for battery saver to actually clear once the charge
+        /// level has been dropped. Normally a formality -- Windows notices within a poll
+        /// or two -- but a wait with no end would turn a slow theme change into a hung
+        /// menu, which is the exact complaint this exists to fix.
+        /// </summary>
+        private const int SuspendTimeoutMilliseconds = 2000;
+
+        /// <summary>
+        /// Battery saver throttles background work hard enough that a change as small as
+        /// <see cref="DarkMode"/>'s theme broadcast can sit unapplied by Explorer for
+        /// minutes, or longer. This lifts battery saver just long enough for a change
+        /// like that to land -- charge level to 0, which no reading is below -- and
+        /// leaves <see cref="ResumeAfterImmediateEffect"/> to put it back, whatever it
+        /// was: the machine's own choice, or a mode this class had already forced.
+        ///
+        /// Does nothing, and answers false, when battery saver is not on: there is
+        /// nothing slowing anything down, and so nothing to lift or to restore.
+        /// </summary>
+        public static bool TrySuspendForImmediateEffect()
+        {
+            if (!PowerSettings.IsBatterySaverOn())
+            {
+                return false;
+            }
+
+            uint previous;
+            try
+            {
+                previous = PowerSettings.Read(PowerSettings.EnergySaverThreshold);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            // Written down before the charge level moves, exactly as ForceBatterySaver
+            // writes its own note first: if the machine is switched off between here and
+            // Resume, what is left behind says what to put back rather than leaving the
+            // level at 0 -- which reads as battery saver switched off for good -- with
+            // nothing to say why.
+            Settings.RememberDarkModeEnergySaverOverride(previous);
+
+            try
+            {
+                PowerSettings.Write(PowerSettings.EnergySaverThreshold, 0);
+            }
+            catch (Exception)
+            {
+                Settings.ForgetDarkModeEnergySaverOverride();
+                return false;
+            }
+
+            int waited = 0;
+            while (PowerSettings.IsBatterySaverOn() && waited < SuspendTimeoutMilliseconds)
+            {
+                Thread.Sleep(SuspendPollIntervalMilliseconds);
+                waited += SuspendPollIntervalMilliseconds;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Puts the charge level back after <see cref="TrySuspendForImmediateEffect"/>.
+        /// Safe to call unconditionally: with nothing remembered -- suspending was
+        /// skipped, or already resumed -- this does nothing. Also what a fresh launch
+        /// calls on startup, in case the last run stopped between the two.
+        /// </summary>
+        public static void ResumeAfterImmediateEffect()
+        {
+            uint previous;
+            if (!Settings.TryGetDarkModeEnergySaverOverride(out previous))
+            {
+                return;
+            }
+            try
+            {
+                PowerSettings.Write(PowerSettings.EnergySaverThreshold, previous);
+            }
+            finally
+            {
+                // Dropped even if the write above threw: a value it could not restore is
+                // not a value worth remembering, and a retry has nothing new to try.
+                Settings.ForgetDarkModeEnergySaverOverride();
+            }
         }
 
         private static class NativeMethods

@@ -16,6 +16,7 @@ namespace SleepPicker
         private const string KeyPath = @"Software\SleepPicker";
         private const string DynamicTrayIconValue = "DynamicTrayIcon";
         private const string EnergySaverThresholdValue = "EnergySaverThreshold";
+        private const string DarkModeEnergySaverOverrideValue = "DarkModeEnergySaverOverride";
 
         /// <summary>
         /// Whether the tray icon shows the battery charge as the moon's phase. On by
@@ -111,6 +112,60 @@ namespace SleepPicker
         public static void ForgetForcedEnergySaverThreshold()
         {
             Forget(EnergySaverThresholdValue);
+        }
+
+        /// <summary>
+        /// The charge level as it was before it was briefly overridden to pull the
+        /// machine out of battery saver for a Dark Mode toggle -- see
+        /// <see cref="PowerModeSettings.TrySuspendForImmediateEffect"/> -- or false when
+        /// no such override is outstanding.
+        ///
+        /// Kept under a key of its own rather than reusing
+        /// <see cref="EnergySaverThresholdValue"/>: that one is the Power Mode row's own
+        /// note of what to restore once battery saver is no longer wanted, and the two
+        /// overrides can be in the air together -- battery saver chosen deliberately from
+        /// the menu, then briefly lifted again for a theme change -- so they must not
+        /// share a slot or one would overwrite what the other needs to put back.
+        /// </summary>
+        public static bool TryGetDarkModeEnergySaverOverride(out uint previous)
+        {
+            previous = 0;
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(KeyPath, false))
+            {
+                if (key == null)
+                {
+                    return false;
+                }
+                object value = key.GetValue(DarkModeEnergySaverOverrideValue);
+                if (value == null)
+                {
+                    return false;
+                }
+                try
+                {
+                    int stored = Convert.ToInt32(value);
+                    if (stored < 0 || stored > 100)
+                    {
+                        return false;
+                    }
+                    previous = (uint)stored;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
+        }
+
+        public static void RememberDarkModeEnergySaverOverride(uint previous)
+        {
+            Store(DarkModeEnergySaverOverrideValue, (int)previous);
+        }
+
+        public static void ForgetDarkModeEnergySaverOverride()
+        {
+            Forget(DarkModeEnergySaverOverrideValue);
         }
 
         private static void Store(string valueName, int value)

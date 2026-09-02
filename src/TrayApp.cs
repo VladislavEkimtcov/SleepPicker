@@ -578,8 +578,16 @@ namespace SleepPicker
             }
         }
 
+        /// <summary>
+        /// Battery saver throttles background work hard enough that the theme-change
+        /// broadcast in <see cref="DarkMode.SetEnabled"/> can sit unapplied by Explorer
+        /// for minutes -- see <see cref="PowerModeSettings.TrySuspendForImmediateEffect"/>
+        /// -- so battery saver is lifted for the moment the change is made and restored
+        /// straight afterward, whether the toggle itself succeeds or not.
+        /// </summary>
         private void OnDarkModeClick(object sender, EventArgs e)
         {
+            bool suspended = PowerModeSettings.TrySuspendForImmediateEffect();
             try
             {
                 DarkMode.SetEnabled(!DarkMode.IsEnabled());
@@ -587,6 +595,22 @@ namespace SleepPicker
             catch (Exception ex)
             {
                 ShowError("Could not change the Dark Mode setting: " + ex.Message);
+            }
+            finally
+            {
+                if (suspended)
+                {
+                    try
+                    {
+                        PowerModeSettings.ResumeAfterImmediateEffect();
+                    }
+                    catch (Exception)
+                    {
+                        // Nothing more to do from here; the next launch's startup check,
+                        // or the next mode picked from the Power Mode row, puts the
+                        // charge level back.
+                    }
+                }
             }
         }
 

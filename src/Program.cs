@@ -30,6 +30,20 @@ namespace SleepPicker
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
+                // Puts the charge level back if the previous run stopped between
+                // lifting battery saver for a Dark Mode toggle and restoring it --
+                // see PowerModeSettings.TrySuspendForImmediateEffect. A no-op almost
+                // every time: there is normally nothing to put back.
+                try
+                {
+                    PowerModeSettings.ResumeAfterImmediateEffect();
+                }
+                catch (Exception)
+                {
+                    // Best-effort only; the row a user actually picks from the Power
+                    // Mode menu overwrites whatever this could not fix.
+                }
+
                 // WindowsFormsSynchronizationContext.Current is what the single-instance
                 // listener thread posts the "show menu" request to, so install it before
                 // the tray context is constructed.

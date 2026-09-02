@@ -188,6 +188,13 @@ source cannot disagree and draw a moon that was never true. It reports 255 for a
 does not know, which is what virtual machines and some docks give back; that falls back to
 the fixed icon rather than drawing 255% of a moon.
 
+Battery saver throttles background work hard enough that Dark Mode's own theme-change
+broadcast can sit unapplied by Explorer for minutes. Rather than live with that, SleepPicker
+briefly lifts battery saver — the same charge-level trick as the Power Mode row, in
+reverse — for the moment the toggle is made, then puts the charge level straight back,
+whatever it was: the machine's own, or a mode SleepPicker had already forced through the
+Power Mode row.
+
 The time remaining comes from `CallNtPowerInformation(SystemBatteryState)`, in the same
 `powrprof.dll`. On battery it hands back Windows' own estimate — the one the battery
 flyout shows, smoothed over recent samples, where an instantaneous rate would swing with
