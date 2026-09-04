@@ -35,6 +35,8 @@
       at instead.
     -->
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+    <DefineConstants Condition=" '$(EnableAutoUpdate)' == 'true' and '$(DefineConstants)' == '' ">ENABLE_AUTO_UPDATE</DefineConstants>
+    <DefineConstants Condition=" '$(EnableAutoUpdate)' == 'true' and '$(DefineConstants)' != '' and !$(DefineConstants.Contains('ENABLE_AUTO_UPDATE')) ">$(DefineConstants);ENABLE_AUTO_UPDATE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -76,6 +78,7 @@
     <Compile Include="src\DarkMode.cs" />
     <Compile Include="src\AutoBrightness.cs" />
     <Compile Include="src\MouseAcceleration.cs" />
+    <Compile Include="src\AutoUpdater.cs" />
     <Compile Include="src\SingleInstance.cs" />
     <Compile Include="src\Properties\AssemblyInfo.cs" />
   </ItemGroup>

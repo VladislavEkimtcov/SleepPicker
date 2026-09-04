@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace SleepPicker
 {
@@ -49,12 +50,33 @@ namespace SleepPicker
                 // the tray context is constructed.
                 SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
-                using (TrayApp trayApp = new TrayApp(instance))
+                AutoUpdater.Start();
+                SystemEvents.SessionEnding += OnSessionEnding;
+                AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+
+                try
                 {
-                    Application.Run(trayApp);
+                    using (TrayApp trayApp = new TrayApp(instance))
+                    {
+                        Application.Run(trayApp);
+                    }
+                }
+                finally
+                {
+                    AutoUpdater.ApplyPendingUpdate();
                 }
             }
             return 0;
+        }
+
+        private static void OnSessionEnding(object sender, SessionEndingEventArgs e)
+        {
+            AutoUpdater.ApplyPendingUpdate();
+        }
+
+        private static void OnProcessExit(object sender, EventArgs e)
+        {
+            AutoUpdater.ApplyPendingUpdate();
         }
     }
 }

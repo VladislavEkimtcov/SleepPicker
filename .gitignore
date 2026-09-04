@@ -8,5 +8,6 @@ __pycache__/
 
 # Local working files, not part of the project.
 task.md
+githubdist.md
 winminal.md
 sleep.png

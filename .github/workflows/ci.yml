@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build dev binary (build.cmd without auto-update)
+        shell: cmd
+        run: build.cmd
+
+      - name: Verify dev binary exists
+        shell: cmd
+        run: if not exist bin\SleepPicker.exe exit /b 1
+
+      - name: Build with PowerShell (build.ps1)
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Clean bin
+        shell: cmd
+        run: del /q bin\SleepPicker.exe
+
+      - name: Build release binary (build.cmd with auto-update)
+        shell: cmd
+        run: build.cmd /p:EnableAutoUpdate=true
+
+      - name: Verify release binary exists
+        shell: cmd
+        run: if not exist bin\SleepPicker.exe exit /b 1

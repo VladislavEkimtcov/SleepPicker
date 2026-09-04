@@ -33,6 +33,9 @@ namespace SleepPicker
         private readonly ToolStripMenuItem _autoStartItem;
         private readonly ToolStripMenuItem _dynamicIconItem;
         private readonly ToolStripMenuItem _hideBatteryMeterItem;
+#if ENABLE_AUTO_UPDATE
+        private readonly ToolStripMenuItem _updateStatusItem;
+#endif
         private readonly SingleInstance _singleInstance;
         private readonly SynchronizationContext _uiContext;
 
@@ -127,6 +130,14 @@ namespace SleepPicker
                 "Needs an administrator's approval and restarts Explorer; you are asked first.";
             _hideBatteryMeterItem.Click += OnHideBatteryMeterClick;
             _menu.Items.Add(_hideBatteryMeterItem);
+
+#if ENABLE_AUTO_UPDATE
+            _updateStatusItem = new ToolStripMenuItem(AutoUpdater.StatusText);
+            _updateStatusItem.Enabled = false;
+            _menu.Items.Add(_updateStatusItem);
+
+            AutoUpdater.StatusChanged += OnAutoUpdaterStatusChanged;
+#endif
 
             ToolStripMenuItem exitItem = new ToolStripMenuItem("Exit");
             exitItem.Click += OnExitClick;
@@ -342,6 +353,11 @@ namespace SleepPicker
         /// </summary>
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
+            if (e.Mode == PowerModes.Resume)
+            {
+                AutoUpdater.CheckForUpdatesAsync();
+            }
+
             if (e.Mode != PowerModes.StatusChange)
             {
                 return;
@@ -433,6 +449,10 @@ namespace SleepPicker
             // set the same value.
             _hideBatteryMeterItem.Visible = hasBattery;
             _hideBatteryMeterItem.Checked = meterHidden;
+
+#if ENABLE_AUTO_UPDATE
+            _updateStatusItem.Text = AutoUpdater.StatusText;
+#endif
 
             // Opening the menu is also when a battery that appeared since the last look --
             // a tablet back in its dock -- gets noticed.
@@ -823,13 +843,32 @@ namespace SleepPicker
             // Hide first, or the icon lingers in the notification area until hovered.
             _refreshTimer.Enabled = false;
             _notifyIcon.Visible = false;
+            AutoUpdater.ApplyPendingUpdate();
             base.ExitThreadCore();
         }
+
+#if ENABLE_AUTO_UPDATE
+        private void OnAutoUpdaterStatusChanged(object sender, EventArgs e)
+        {
+            _uiContext.Post(new SendOrPostCallback(UpdateStatusCallback), null);
+        }
+
+        private void UpdateStatusCallback(object state)
+        {
+            if (_updateStatusItem != null)
+            {
+                _updateStatusItem.Text = AutoUpdater.StatusText;
+            }
+        }
+#endif
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
+#if ENABLE_AUTO_UPDATE
+                AutoUpdater.StatusChanged -= OnAutoUpdaterStatusChanged;
+#endif
                 _singleInstance.ShowMenuRequested -= OnShowMenuRequested;
                 // SystemEvents holds its handlers in a static list, so leaving this
                 // attached would keep the whole application context alive.
