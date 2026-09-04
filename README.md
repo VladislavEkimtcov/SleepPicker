@@ -223,9 +223,12 @@ src/
   DarkMode.cs        the light/dark app theme toggle
   AutoBrightness.cs  the adaptive brightness toggle
   MouseAcceleration.cs  the mouse acceleration ("Enhance pointer precision") toggle
+  AutoUpdater.cs     anonymous GitHub release auto-updater (release builds)
   SingleInstance.cs  mutex plus "show the menu" signal
 tools/
   MakeIcon.ps1       regenerates the .ico from assets/SleepPicker.png
   MakeMoonPhases.py  renders docs/moon-phases.png from MoonIcon.cs's geometry
+build.cmd            builds with Windows' in-box MSBuild (dev build)
+build.ps1            PowerShell equivalent of build.cmd
 bin/SleepPicker.exe  the build, committed so it can just be downloaded
 ```
