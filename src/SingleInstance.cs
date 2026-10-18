@@ -36,6 +36,10 @@ namespace SleepPicker
             _mutex = new Mutex(true, MutexName, out createdNew);
             if (!createdNew)
             {
+                // Not ours to release: ReleaseMutex on a mutex this thread does not own
+                // throws, which used to crash every second launch on its way out.
+                _mutex.Close();
+                _mutex = null;
                 return false;
             }
 

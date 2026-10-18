@@ -30,7 +30,21 @@ anywhere: click the moon in the notification area, pick a time.
   hides the only place Windows 10 offers the power slider, so SleepPicker puts those four
   modes in the menu — but only while the icon is hidden. Described below.
 - **Start with Windows.** A checkbox, and nothing more than a per-user `Run` entry.
-- **Nothing to install, nothing left behind.** One 100 KB executable, no runtime, no
+- **Desktop switching at the screen edges.** For a session driven over VNC, where Win+Ctrl+arrows
+  and trackpad gestures never arrive. Rest the pointer near the left or right edge to move to the
+  previous or next desktop, or scroll over the taskbar. Click the row to turn it on; its submenu
+  sets the **Sensitivity** (how long to rest, 0.1–0.8 s) and the **Distance** (how far in from the
+  edge counts, 2–128 px — widen it when a small viewer window lets the pointer fly off before it
+  reaches the edge). Each change draws the zones for a second, filling over the rest time. The top
+  and bottom 12 % of each edge never trigger. A row of dots shows the position after each switch.
+  Fling the pointer up into the top zone (its own **Top distance**, 16–160 px, default 96, thick because the
+  viewer's title bar takes the pointer first) and it comes to rest: Task View opens, or closes if
+  open. Only a fast fling counts, so resting on tabs or menus near the top does nothing.
+- **Peek from taskbar buttons.** Rest on a taskbar button and every other window turns to glass, as
+  hovering its thumbnail does, without waiting for the thumbnail. Ends on leaving the taskbar or clicking.
+- **Hide taskbar previews.** No thumbnails pop up over a resting pointer; the peek already shows the real
+  window. A click on a grouped button still lists its windows. Restarts Explorer, after asking.
+- **Nothing to install, nothing left behind.** One 150 KB executable, no runtime, no
   configuration file, and at most four registry values under HKCU. Nothing is elevated
   except the one optional change above, and only at the moment you ask for it.
 
@@ -223,6 +237,11 @@ src/
   DarkMode.cs        the light/dark app theme toggle
   AutoBrightness.cs  the adaptive brightness toggle
   MouseAcceleration.cs  the mouse acceleration ("Enhance pointer precision") toggle
+  EdgeSwitch.cs      edges, Task View fling, peek: reads the pointer position; a wheel-only hook
+  EdgeOverlay.cs     the zone preview and the desktop dots
+  VirtualDesktops.cs the switch itself (Win+Ctrl+arrow; Explorer's service over elevated windows)
+  TaskbarPeek.cs     button under the pointer (MSAA) to its window, then DWM's own peek
+  TaskbarPreviews.cs hides the hover thumbnails: an hour-long ExtendedUIHoverTime
   SingleInstance.cs  mutex plus "show the menu" signal
 tools/
   MakeIcon.ps1       regenerates the .ico from assets/SleepPicker.png

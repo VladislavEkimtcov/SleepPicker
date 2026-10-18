@@ -31,6 +31,36 @@ namespace SleepPicker
         private readonly ToolStripMenuItem _autoBrightnessItem;
         private readonly ToolStripMenuItem _mouseAccelerationItem;
         private readonly ToolStripMenuItem _autoStartItem;
+        private readonly ToolStripMenuItem _edgeSwitchItem;
+        private readonly ToolStripMenuItem _edgeSensitivityItem;
+        private readonly ToolStripMenuItem _edgeDistanceItem;
+        private readonly ToolStripMenuItem _edgeTopDistanceItem;
+        private readonly ToolStripMenuItem _taskbarPeekItem;
+        private readonly ToolStripMenuItem _hidePreviewsItem;
+        private readonly EdgePreview _edgePreview = new EdgePreview();
+
+        /// <summary>
+        /// The mouse hook behind both the edge switching and the taskbar peek: running while
+        /// either is on, null while both are off.
+        /// </summary>
+        private EdgeSwitch _edgeSwitch;
+
+        /// <summary>
+        /// Rebuilds <see cref="_edgeSwitch"/> once a minute while it is quiet. Turning the
+        /// feature off and on is what brought a dead one back, and a fresh one costs a few
+        /// milliseconds -- so it is simply done regularly, whatever the cause turns out to be.
+        /// </summary>
+        private readonly System.Windows.Forms.Timer _edgeRefreshTimer = new System.Windows.Forms.Timer();
+
+        /// <summary>Rest times offered, shortest (most sensitive) first, with their names.</summary>
+        private static readonly int[] EdgeDwellPresets = new int[] { 100, 200, 300, 500, 800 };
+        private static readonly string[] EdgeDwellNames = new string[] { "Highest", "High", "Medium", "Low", "Lowest" };
+
+        /// <summary>Zone widths offered, in screen pixels.</summary>
+        private static readonly int[] EdgeDistancePresets = new int[] { 2, 8, 16, 24, 32, 48, 64, 96, 128 };
+
+        /// <summary>Top zone thicknesses offered: thicker, for the viewer's title bar and toolbar.</summary>
+        private static readonly int[] EdgeTopDistancePresets = new int[] { 16, 32, 48, 64, 96, 128, 160 };
         private readonly ToolStripMenuItem _dynamicIconItem;
         private readonly ToolStripMenuItem _hideBatteryMeterItem;
         private readonly SingleInstance _singleInstance;
@@ -115,6 +145,46 @@ namespace SleepPicker
             _autoStartItem.Click += OnAutoStartClick;
             _menu.Items.Add(_autoStartItem);
 
+            // Clicking the row itself turns the feature on and off; its submenu tunes it.
+            // A row with a submenu stays open when clicked, so the tick changes in place.
+            _edgeSwitchItem = new ToolStripMenuItem("Switch desktops at screen edges");
+            _edgeSwitchItem.ToolTipText =
+                "Rest the pointer near the left or right edge of the screen, or scroll over " +
+                "the taskbar, to move to the previous or next desktop. Fling it up to the top " +
+                "for Task View.";
+            _edgeSwitchItem.Click += OnEdgeSwitchClick;
+            _edgeSensitivityItem = new ToolStripMenuItem("Sensitivity");
+            _edgeSensitivityItem.ToolTipText = "How long the pointer has to rest near the edge.";
+            _edgeSensitivityItem.DropDownItems.Add(new ToolStripMenuItem("(reading...)"));
+            _edgeDistanceItem = new ToolStripMenuItem("Distance");
+            _edgeDistanceItem.ToolTipText =
+                "How far in from the edge still counts. Widen it when the pointer leaves a " +
+                "small VNC viewer window before it reaches the edge.";
+            _edgeDistanceItem.DropDownItems.Add(new ToolStripMenuItem("(reading...)"));
+            _edgeTopDistanceItem = new ToolStripMenuItem("Top distance");
+            _edgeTopDistanceItem.ToolTipText =
+                "How far down from the top a fling still opens Task View. Thick, because the " +
+                "viewer's title bar and toolbar take the pointer before it reaches the top.";
+            _edgeTopDistanceItem.DropDownItems.Add(new ToolStripMenuItem("(reading...)"));
+            _edgeSwitchItem.DropDownItems.Add(_edgeSensitivityItem);
+            _edgeSwitchItem.DropDownItems.Add(_edgeDistanceItem);
+            _edgeSwitchItem.DropDownItems.Add(_edgeTopDistanceItem);
+            _menu.Items.Add(_edgeSwitchItem);
+
+            _taskbarPeekItem = new ToolStripMenuItem("Peek at windows from taskbar buttons");
+            _taskbarPeekItem.ToolTipText =
+                "Rest the pointer on a taskbar button and every other window turns to glass, " +
+                "as hovering its thumbnail does -- without waiting for the thumbnail.";
+            _taskbarPeekItem.Click += OnTaskbarPeekClick;
+            _menu.Items.Add(_taskbarPeekItem);
+
+            _hidePreviewsItem = new ToolStripMenuItem("Hide taskbar previews");
+            _hidePreviewsItem.ToolTipText =
+                "No thumbnails over a resting pointer; the peek shows the real window instead. " +
+                "A click on a grouped button still lists its windows. Restarts Explorer; you are asked first.";
+            _hidePreviewsItem.Click += OnHidePreviewsClick;
+            _menu.Items.Add(_hidePreviewsItem);
+
             _dynamicIconItem = new ToolStripMenuItem("Dynamic tray icon");
             _dynamicIconItem.ToolTipText =
                 "Show the battery charge as the moon's phase — waning on battery, waxing on mains.";
@@ -148,6 +218,50 @@ namespace SleepPicker
             _refreshTimer.Enabled = IsRefreshWanted();
 
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
+            ApplyPointerFeatures();
+
+            _edgeRefreshTimer.Interval = 60 * 1000;
+            _edgeRefreshTimer.Tick += OnEdgeRefreshTick;
+            _edgeRefreshTimer.Start();
+        }
+
+        private void OnEdgeRefreshTick(object sender, EventArgs e)
+        {
+            if (_edgeSwitch != null && _edgeSwitch.IsQuiet)
+            {
+                StopEdgeSwitch();
+                ApplyPointerFeatures();
+            }
+        }
+
+        /// <summary>Starts, retunes or stops the mouse hook to match the two settings that use it.</summary>
+        private void ApplyPointerFeatures()
+        {
+            bool edges = Settings.EdgeSwitchEnabled;
+            bool peek = Settings.TaskbarPeek;
+            if (!edges && !peek)
+            {
+                StopEdgeSwitch();
+                return;
+            }
+            if (_edgeSwitch == null)
+            {
+                _edgeSwitch = new EdgeSwitch(Settings.EdgeSwitchDwellMilliseconds, Settings.EdgeSwitchDistancePixels,
+                    Settings.EdgeSwitchTopDistancePixels, edges, peek);
+                return;
+            }
+            _edgeSwitch.EdgesEnabled = edges;
+            _edgeSwitch.PeekEnabled = peek;
+        }
+
+        private void StopEdgeSwitch()
+        {
+            if (_edgeSwitch != null)
+            {
+                _edgeSwitch.Dispose();
+                _edgeSwitch = null;
+            }
         }
 
         /// <summary>
@@ -423,6 +537,8 @@ namespace SleepPicker
 
             _autoStartItem.Checked = AutoStart.IsEnabled();
 
+            UpdateEdgeSwitch();
+
             // A moon that tracks the charge means nothing on a desktop, so the row is
             // hidden there alongside the two "on battery" rows above it.
             _dynamicIconItem.Visible = hasBattery;
@@ -663,6 +779,186 @@ namespace SleepPicker
             }
         }
 
+        private void UpdateEdgeSwitch()
+        {
+            _edgeSwitchItem.Checked = Settings.EdgeSwitchEnabled;
+            _taskbarPeekItem.Checked = Settings.TaskbarPeek;
+            _hidePreviewsItem.Checked = TaskbarPreviews.IsHidden();
+
+            int dwell = Settings.EdgeSwitchDwellMilliseconds;
+            _edgeSensitivityItem.Text = "Sensitivity — " + DescribeDwell(dwell);
+            string[] dwellLabels = new string[EdgeDwellPresets.Length];
+            for (int i = 0; i < EdgeDwellPresets.Length; i++)
+            {
+                dwellLabels[i] = EdgeDwellNames[i] + " — " + Seconds(EdgeDwellPresets[i]);
+            }
+            FillEdgeChoices(_edgeSensitivityItem, EdgeDwellPresets, dwellLabels, dwell,
+                DescribeDwell(dwell), delegate(int v) { Settings.EdgeSwitchDwellMilliseconds = v; }, "edge sensitivity");
+
+            int distance = Settings.EdgeSwitchDistancePixels;
+            _edgeDistanceItem.Text = "Distance — " + Pixels(distance);
+            string[] distanceLabels = new string[EdgeDistancePresets.Length];
+            for (int i = 0; i < EdgeDistancePresets.Length; i++)
+            {
+                distanceLabels[i] = Pixels(EdgeDistancePresets[i]) +
+                    (EdgeDistancePresets[i] <= 2 ? " — the very edge" : "");
+            }
+            FillEdgeChoices(_edgeDistanceItem, EdgeDistancePresets, distanceLabels, distance,
+                Pixels(distance), delegate(int v) { Settings.EdgeSwitchDistancePixels = v; }, "edge distance");
+
+            int top = Settings.EdgeSwitchTopDistancePixels;
+            _edgeTopDistanceItem.Text = "Top distance — " + Pixels(top);
+            string[] topLabels = new string[EdgeTopDistancePresets.Length];
+            for (int i = 0; i < EdgeTopDistancePresets.Length; i++)
+            {
+                topLabels[i] = Pixels(EdgeTopDistancePresets[i]);
+            }
+            FillEdgeChoices(_edgeTopDistanceItem, EdgeTopDistancePresets, topLabels, top,
+                Pixels(top), delegate(int v) { Settings.EdgeSwitchTopDistancePixels = v; }, "top distance");
+        }
+
+        private void FillEdgeChoices(ToolStripMenuItem parent, int[] presets, string[] labels,
+            int current, string currentLabel, Action<int> store, string what)
+        {
+            // Dispose the previous generation of items; Clear() only detaches them.
+            ToolStripItem[] stale = new ToolStripItem[parent.DropDownItems.Count];
+            parent.DropDownItems.CopyTo(stale, 0);
+            parent.DropDownItems.Clear();
+            for (int i = 0; i < stale.Length; i++)
+            {
+                stale[i].Dispose();
+            }
+
+            // A value written by hand need not be one of ours; show it rather than leaving
+            // nothing ticked, as the timeout submenus do.
+            if (Array.IndexOf(presets, current) < 0)
+            {
+                ToolStripMenuItem customItem = new ToolStripMenuItem(currentLabel + " (current)");
+                customItem.Checked = true;
+                customItem.Enabled = false;
+                parent.DropDownItems.Add(customItem);
+                parent.DropDownItems.Add(new ToolStripSeparator());
+            }
+
+            for (int i = 0; i < presets.Length; i++)
+            {
+                ToolStripMenuItem choice = new ToolStripMenuItem(labels[i]);
+                choice.Checked = presets[i] == current;
+                int value = presets[i];
+                choice.Click += delegate { OnEdgeChoice(store, value, what); };
+                parent.DropDownItems.Add(choice);
+            }
+        }
+
+        private static string DescribeDwell(int milliseconds)
+        {
+            int i = Array.IndexOf(EdgeDwellPresets, milliseconds);
+            return i < 0 ? Seconds(milliseconds) : EdgeDwellNames[i] + " (" + Seconds(milliseconds) + ")";
+        }
+
+        private static string Seconds(int milliseconds)
+        {
+            return (milliseconds / 1000.0).ToString("0.0##", System.Globalization.CultureInfo.CurrentCulture) + " s";
+        }
+
+        private static string Pixels(int pixels)
+        {
+            return pixels.ToString() + " px";
+        }
+
+        private void OnEdgeSwitchClick(object sender, EventArgs e)
+        {
+            bool enable = !Settings.EdgeSwitchEnabled;
+            try
+            {
+                Settings.EdgeSwitchEnabled = enable;
+                ApplyPointerFeatures();
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the edge desktop switching setting: " + ex.Message);
+            }
+            // The menu stays open on a row with a submenu, so its tick is updated here.
+            _edgeSwitchItem.Checked = Settings.EdgeSwitchEnabled;
+            if (Settings.EdgeSwitchEnabled)
+            {
+                ShowEdgePreview();
+            }
+        }
+
+        private void OnTaskbarPeekClick(object sender, EventArgs e)
+        {
+            try
+            {
+                Settings.TaskbarPeek = !Settings.TaskbarPeek;
+                ApplyPointerFeatures();
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the taskbar peek setting: " + ex.Message);
+            }
+        }
+
+        private void OnHidePreviewsClick(object sender, EventArgs e)
+        {
+            bool hide = !TaskbarPreviews.IsHidden();
+            // Asked before anything is written, as for the battery icon. Unlike that one this
+            // needs no elevation, so No could still write it for the next sign-in -- but a
+            // tick that changes nothing visible until then would read as broken.
+            if (!ConfirmExplorerRestart(
+                (hide ? "Hiding" : "Showing") + " taskbar previews takes a restart of Windows " +
+                "Explorer, because the taskbar only reads this setting when it starts."))
+            {
+                return;
+            }
+            try
+            {
+                TaskbarPreviews.SetHidden(hide);
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the taskbar preview setting: " + ex.Message);
+                return;
+            }
+            try
+            {
+                BatteryMeter.RestartExplorer();
+            }
+            catch (Exception ex)
+            {
+                ShowError("The setting was changed, but Explorer could not be restarted: " +
+                    ex.Message + " It takes effect the next time you sign in.");
+            }
+        }
+
+        private void ShowEdgePreview()
+        {
+            _edgePreview.Show(Settings.EdgeSwitchDwellMilliseconds, Settings.EdgeSwitchDistancePixels,
+                Settings.EdgeSwitchTopDistancePixels);
+        }
+
+        /// <summary>One handler for all three submenus: store the value, hand all three
+        /// current values to the running hook, and show the zones.</summary>
+        private void OnEdgeChoice(Action<int> store, int value, string what)
+        {
+            try
+            {
+                store(value);
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the " + what + ": " + ex.Message);
+                return;
+            }
+            if (_edgeSwitch != null)
+            {
+                _edgeSwitch.DwellMilliseconds = Settings.EdgeSwitchDwellMilliseconds;
+                _edgeSwitch.DistancePixels = Settings.EdgeSwitchDistancePixels;
+                _edgeSwitch.TopDistancePixels = Settings.EdgeSwitchTopDistancePixels;
+            }
+            ShowEdgePreview();
+        }
+
         private void OnDynamicIconClick(object sender, EventArgs e)
         {
             try
@@ -687,7 +983,11 @@ namespace SleepPicker
 
             // Asked before anything is written, so backing out leaves the registry exactly
             // as it was rather than half-changed until the next sign-in.
-            if (!ConfirmExplorerRestart(hide))
+            if (!ConfirmExplorerRestart(
+                (hide ? "Hiding" : "Showing") + " the Windows battery icon takes two things " +
+                "Windows asks for: an administrator's approval, because this setting is one " +
+                "of the ones users are not allowed to change for themselves, and a restart " +
+                "of Windows Explorer, because the taskbar only reads it when it starts."))
             {
                 return;
             }
@@ -731,15 +1031,12 @@ namespace SleepPicker
         /// <summary>
         /// The one dialog in the program. Restarting the shell is disruptive enough that it
         /// has to be declinable, and false here means nothing is asked for and nothing is
-        /// written at all.
+        /// written at all. <paramref name="why"/> says what is changing and what it takes.
         /// </summary>
-        private static bool ConfirmExplorerRestart(bool hide)
+        private static bool ConfirmExplorerRestart(string why)
         {
             string message =
-                (hide ? "Hiding" : "Showing") + " the Windows battery icon takes two things " +
-                "Windows asks for: an administrator's approval, because this setting is one " +
-                "of the ones users are not allowed to change for themselves, and a restart " +
-                "of Windows Explorer, because the taskbar only reads it when it starts." +
+                why +
                 Environment.NewLine + Environment.NewLine +
                 "The taskbar will disappear for a moment and any open File Explorer windows " +
                 "will close. Nothing is changed if you choose No." +
@@ -834,6 +1131,9 @@ namespace SleepPicker
                 // SystemEvents holds its handlers in a static list, so leaving this
                 // attached would keep the whole application context alive.
                 SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+                _edgeRefreshTimer.Dispose();
+                StopEdgeSwitch();
+                _edgePreview.Dispose();
                 _refreshTimer.Dispose();
                 _notifyIcon.Dispose();
                 _menu.Dispose();
