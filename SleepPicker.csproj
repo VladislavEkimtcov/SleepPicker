@@ -30,6 +30,11 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AutoUnifyAssemblyReferences>true</AutoUnifyAssemblyReferences>
     <!--
+      Runs 64-bit, not as the 32-bit process an AnyCPU exe defaults to: DWM refuses the
+      taskbar peek (TaskbarPeek.cs) from a 32-bit caller with ERROR_BAD_LENGTH.
+    -->
+    <Prefer32Bit>false</Prefer32Bit>
+    <!--
       Silences MSB3270: an AnyCPU assembly resolving mscorlib from the 64-bit GAC is
       exactly what is expected here, and there is no 32-bit reference assembly to point
       at instead.
@@ -61,6 +66,10 @@
     <Reference Include="System.Windows.Forms">
       <Private>False</Private>
     </Reference>
+    <!-- The IAccessible interface, for reading the taskbar's buttons (TaskbarPeek.cs). -->
+    <Reference Include="Accessibility">
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
@@ -79,6 +88,11 @@
     <Compile Include="src\AutoBrightness.cs" />
     <Compile Include="src\MouseAcceleration.cs" />
     <Compile Include="src\AutoUpdater.cs" />
+    <Compile Include="src\EdgeSwitch.cs" />
+    <Compile Include="src\EdgeOverlay.cs" />
+    <Compile Include="src\VirtualDesktops.cs" />
+    <Compile Include="src\TaskbarPeek.cs" />
+    <Compile Include="src\TaskbarPreviews.cs" />
     <Compile Include="src\SingleInstance.cs" />
     <Compile Include="src\Properties\AssemblyInfo.cs" />
   </ItemGroup>

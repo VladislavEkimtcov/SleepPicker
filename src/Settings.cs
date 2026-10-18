@@ -17,6 +17,12 @@ namespace SleepPicker
         private const string DynamicTrayIconValue = "DynamicTrayIcon";
         private const string EnergySaverThresholdValue = "EnergySaverThreshold";
         private const string DarkModeEnergySaverOverrideValue = "DarkModeEnergySaverOverride";
+        private const string EdgeSwitchValue = "EdgeSwitch";
+        private const string EdgeSwitchDwellValue = "EdgeSwitchDwellMilliseconds";
+        private const string EdgeSwitchDistanceValue = "EdgeSwitchDistancePixels";
+        private const string EdgeSwitchTopDistanceValue = "EdgeSwitchTopDistancePixels";
+        private const string TaskbarPeekValue = "TaskbarPeek";
+        private const string DevReadoutValue = "DevReadout";
 
         /// <summary>
         /// Whether the tray icon shows the battery charge as the moon's phase. On by
@@ -166,6 +172,111 @@ namespace SleepPicker
         public static void ForgetDarkModeEnergySaverOverride()
         {
             Forget(DarkModeEnergySaverOverrideValue);
+        }
+
+        /// <summary>
+        /// Whether resting the pointer on a side edge, or scrolling over the taskbar,
+        /// switches virtual desktops. Off by default: the hook watches every pointer
+        /// movement in the session, which nobody should get without asking.
+        /// </summary>
+        public static bool EdgeSwitchEnabled
+        {
+            get { return ReadInt(EdgeSwitchValue, 0, 0, 1) != 0; }
+            set
+            {
+                if (value)
+                {
+                    Store(EdgeSwitchValue, 1);
+                    return;
+                }
+                Forget(EdgeSwitchValue);
+            }
+        }
+
+        /// <summary>How long the pointer has to rest in the zone; stored only when not the default.</summary>
+        public static int EdgeSwitchDwellMilliseconds
+        {
+            get { return ReadInt(EdgeSwitchDwellValue, EdgeSwitch.DefaultDwellMilliseconds, 10, 5000); }
+            set { StoreUnlessDefault(EdgeSwitchDwellValue, value, EdgeSwitch.DefaultDwellMilliseconds); }
+        }
+
+        /// <summary>How far in from the edge the zone reaches, in screen pixels; stored only when not the default.</summary>
+        public static int EdgeSwitchDistancePixels
+        {
+            get { return ReadInt(EdgeSwitchDistanceValue, EdgeSwitch.DefaultDistancePixels, 1, 1000); }
+            set { StoreUnlessDefault(EdgeSwitchDistanceValue, value, EdgeSwitch.DefaultDistancePixels); }
+        }
+
+        /// <summary>How far down from the top the Task View zone reaches; stored only when not the default.</summary>
+        public static int EdgeSwitchTopDistancePixels
+        {
+            get { return ReadInt(EdgeSwitchTopDistanceValue, EdgeSwitch.DefaultTopDistancePixels, 1, 1000); }
+            set { StoreUnlessDefault(EdgeSwitchTopDistanceValue, value, EdgeSwitch.DefaultTopDistancePixels); }
+        }
+
+        /// <summary>
+        /// Whether resting on a taskbar button peeks at its window. Off by default, for the
+        /// same reason as <see cref="EdgeSwitchEnabled"/>: it needs the same mouse hook.
+        /// </summary>
+        public static bool TaskbarPeek
+        {
+            get { return ReadInt(TaskbarPeekValue, 0, 0, 1) != 0; }
+            set
+            {
+                if (value)
+                {
+                    Store(TaskbarPeekValue, 1);
+                    return;
+                }
+                Forget(TaskbarPeekValue);
+            }
+        }
+
+        /// <summary>
+        /// Developer switch, deliberately not in the menu: a one-line readout of what the edge
+        /// switcher sees, near the bottom-left of the screen, and its trail in edge.log. Off
+        /// unless DevReadout=1 is set by hand.
+        /// </summary>
+        public static bool DevReadout
+        {
+            get { return ReadInt(DevReadoutValue, 0, 0, 1) != 0; }
+        }
+
+        /// <summary>A stored DWORD, or the fallback when it is missing, malformed or out of range.</summary>
+        private static int ReadInt(string valueName, int fallback, int min, int max)
+        {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(KeyPath, false))
+            {
+                if (key == null)
+                {
+                    return fallback;
+                }
+                object value = key.GetValue(valueName);
+                if (value == null)
+                {
+                    return fallback;
+                }
+                try
+                {
+                    int stored = Convert.ToInt32(value);
+                    return stored < min || stored > max ? fallback : stored;
+                }
+                catch (Exception)
+                {
+                    // Something else wrote a string or a blob here; treat it as unset.
+                    return fallback;
+                }
+            }
+        }
+
+        private static void StoreUnlessDefault(string valueName, int value, int defaultValue)
+        {
+            if (value == defaultValue)
+            {
+                Forget(valueName);
+                return;
+            }
+            Store(valueName, value);
         }
 
         private static void Store(string valueName, int value)
