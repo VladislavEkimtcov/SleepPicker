@@ -116,8 +116,7 @@ namespace SleepPicker
             // with the former: it is a Windows power setting, not a preference of ours.
             _powerModeItem = new ToolStripMenuItem("Power Mode");
             _powerModeItem.ToolTipText =
-                "The power slider from Windows' battery flyout — shown here because hiding " +
-                "the battery icon hides the only place Windows offers it.";
+                "The power slider from Windows' battery flyout, without opening the flyout.";
             // Populated on open, like the timeout rows above.
             _powerModeItem.DropDownItems.Add(new ToolStripMenuItem("(reading...)"));
             _menu.Items.Add(_powerModeItem);
@@ -531,14 +530,11 @@ namespace SleepPicker
             bool onMains;
             bool statusKnown = PowerSettings.TryGetBatteryStatus(out percent, out onMains);
 
-            // Likewise one reading of the meter, so the Power Mode row and the tick box that
-            // governs it cannot contradict each other.
-            bool meterHidden = BatteryMeter.IsHidden();
-
-            // The row exists precisely when Windows' own does not: hiding the battery icon
-            // hides the flyout, and the flyout is the only place Windows 10 offers the
-            // slider. Read live, since the icon can be hidden from this very menu.
-            bool showPowerMode = hasBattery && meterHidden && PowerModeSettings.IsAvailable();
+            // Shown whether or not Windows' battery icon is hidden. Tying the row to the icon
+            // left the slider two clicks into a flyout on every machine that kept the icon,
+            // and the row reads the effective overlay live, so it cannot disagree with the
+            // flyout when both are there. Still battery-only, as the slider itself is.
+            bool showPowerMode = hasBattery && PowerModeSettings.IsAvailable();
             _powerModeItem.Visible = showPowerMode;
             if (showPowerMode)
             {
@@ -564,7 +560,7 @@ namespace SleepPicker
             // the registry rather than remembered, because a policy or another tool can
             // set the same value.
             _hideBatteryMeterItem.Visible = hasBattery;
-            _hideBatteryMeterItem.Checked = meterHidden;
+            _hideBatteryMeterItem.Checked = BatteryMeter.IsHidden();
 
 #if ENABLE_AUTO_UPDATE
             _updateStatusItem.Text = AutoUpdater.StatusText;

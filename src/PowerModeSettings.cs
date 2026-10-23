@@ -12,7 +12,7 @@ namespace SleepPicker
     ///
     /// Windows 10 has no Settings page for this: the slider exists only in the flyout that
     /// hangs off the battery icon, so hiding that icon takes the setting with it. This is
-    /// what puts it back, which is why the menu row appears only while the icon is hidden.
+    /// what puts it back, and the menu row is offered whether the icon is hidden or not.
     ///
     /// Three of the four positions are an *overlay*: a set of tweaks laid over the active
     /// power scheme without changing it, chosen with PowerSetActiveOverlayScheme and stored
