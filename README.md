@@ -26,9 +26,10 @@ anywhere: click the moon in the notification area, pick a time.
   both of those in a dialog and does nothing at all unless you agree; on a desktop the row
   is hidden, like the moon row. While it is on, Windows greys out its own **Power** toggle
   in Settings → Taskbar, so unticking here is the way back.
-- **The power mode slider, given somewhere to live.** Hiding Windows' battery icon also
-  hides the only place Windows 10 offers the power slider, so SleepPicker puts those four
-  modes in the menu — but only while the icon is hidden. Described below.
+- **The power mode slider, given somewhere to live.** Windows 10 offers the power slider
+  only in the battery icon's flyout, and hiding that icon hides it too, so SleepPicker puts
+  those four modes in the menu — on any machine with a battery, icon hidden or not.
+  Described below.
 - **Start with Windows.** A checkbox, and nothing more than a per-user `Run` entry.
 - **Desktop switching at the screen edges.** For a session driven over VNC, where Win+Ctrl+arrows
   and trackpad gestures never arrive. Rest the pointer near the left or right edge to move to the
@@ -99,10 +100,11 @@ a removed battery is handled without a restart.
 ## Power mode
 
 Windows 10 keeps its power slider — *Power mode (on battery)* — in the flyout that hangs
-off the battery icon, and nowhere else. There is no Settings page for it. So switching that
-icon off takes the slider with it, and **Power Mode** appears in the menu exactly when that
-happens: tick **Hide the Windows battery icon** and the row is there, untick it and the row
-goes, because Windows is offering the slider again.
+off the battery icon, and nowhere else. There is no Settings page for it, and switching that
+icon off takes the slider with it. **Power Mode** is in the menu on any machine with a
+battery, whether the icon is hidden or not: with the icon gone it is the only way to the
+slider, and with the icon there it is one hover instead of a flyout. On a desktop the row is
+hidden, as Windows hides the slider there.
 
 ![The Power Mode submenu open beside the tray menu, with Best performance ticked](docs/power-mode.png)
 
