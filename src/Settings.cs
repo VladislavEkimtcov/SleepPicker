@@ -17,6 +17,7 @@ namespace SleepPicker
         private const string DynamicTrayIconValue = "DynamicTrayIcon";
         private const string EnergySaverThresholdValue = "EnergySaverThreshold";
         private const string DarkModeEnergySaverOverrideValue = "DarkModeEnergySaverOverride";
+        private const string AccentOnTaskbarSuspendedValue = "AccentOnTaskbarSuspended";
         private const string EdgeSwitchValue = "EdgeSwitch";
         private const string EdgeSwitchDwellValue = "EdgeSwitchDwellMilliseconds";
         private const string EdgeSwitchDistanceValue = "EdgeSwitchDistancePixels";
@@ -172,6 +173,26 @@ namespace SleepPicker
         public static void ForgetDarkModeEnergySaverOverride()
         {
             Forget(DarkModeEnergySaverOverrideValue);
+        }
+
+        /// <summary>
+        /// True while SleepPicker has switched "Show accent color on Start and taskbar" off
+        /// on the way to Light mode, so that going back to Dark can switch it on again.
+        /// Stored only while that is outstanding; without the note, a user who never had
+        /// the option on would have it turned on for them.
+        /// </summary>
+        public static bool AccentOnTaskbarSuspended
+        {
+            get { return ReadInt(AccentOnTaskbarSuspendedValue, 0, 0, 1) != 0; }
+            set
+            {
+                if (value)
+                {
+                    Store(AccentOnTaskbarSuspendedValue, 1);
+                    return;
+                }
+                Forget(AccentOnTaskbarSuspendedValue);
+            }
         }
 
         /// <summary>
