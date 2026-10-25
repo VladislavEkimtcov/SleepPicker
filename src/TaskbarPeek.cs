@@ -21,8 +21,8 @@ namespace SleepPicker
     /// The peek itself is DWM's own, the same call Explorer makes for a thumbnail. It is
     /// undocumented (dwmapi ordinal 113) but has kept this shape since Windows 8.
     ///
-    /// The same lookup also serves the hover focus: the window the button belongs to is
-    /// brought to the front, as a click on it would.
+    /// The same lookup also serves the hover focus: the button is pressed through the same
+    /// accessibility object, so the taskbar does exactly what a click on it does.
     ///
     /// Used from one thread only: the edge-switch worker.
     /// </summary>
@@ -34,6 +34,10 @@ namespace SleepPicker
 
         private IntPtr _peeked;
         private IntPtr _taskbar;
+
+        // What the last lookup found, for the press that may follow it.
+        private IntPtr _list;
+        private bool _grouped;
 
         public bool Active
         {
@@ -56,7 +60,12 @@ namespace SleepPicker
             if (window == IntPtr.Zero)
             {
                 End();
-                return (name == null ? "no button here" : "no window found for [" + name + "]") + at;
+                if (name == null)
+                {
+                    return "no button here" + at;
+                }
+                // A group's press needs no window: it only opens the group's list.
+                return "no window found for [" + name + "]" + (focus && _grouped ? ", " + Press(pt) : "") + at;
             }
             string did = "[" + name + "] -> 0x" + window.ToInt64().ToString("X");
             if (peek)
@@ -65,7 +74,7 @@ namespace SleepPicker
             }
             if (focus)
             {
-                did += ", " + Focus(window);
+                did += ", " + Focus(window, pt);
             }
             return did + at;
         }
@@ -86,28 +95,59 @@ namespace SleepPicker
             return "dwm hr=0x" + hr.ToString("X");
         }
 
-        /// <summary>Brings <paramref name="window"/> to the front as a click on its button
-        /// would -- restoring it if minimized -- but never the click itself: a click on the
-        /// button of the window already in front minimizes it.</summary>
-        private static string Focus(IntPtr window)
+        /// <summary>Does what a click on the button would, by having the taskbar press it:
+        /// Explorer may hand out the foreground, which a background process asking for its
+        /// own window is refused (the button only flashes). Skipped for the window already
+        /// in front, where the click would minimize it; a group's press opens its list.</summary>
+        private string Focus(IntPtr window, EdgeSwitch.NativeMethods.POINT pt)
         {
-            if (NativeMethods.GetForegroundWindow() == window)
+            if (!_grouped && NativeMethods.GetForegroundWindow() == window)
             {
                 return "already in front";
             }
-            if (NativeMethods.IsIconic(window))
+            return Press(pt);
+        }
+
+        /// <summary>The button's default action through its accessibility object: the
+        /// taskbar's own click, with no input injected.</summary>
+        private string Press(EdgeSwitch.NativeMethods.POINT pt)
+        {
+            IAccessible accessible = TaskListAccessible(_list);
+            if (accessible == null)
             {
-                NativeMethods.ShowWindowAsync(window, NativeMethods.SW_RESTORE);
+                return "press: no accessible";
             }
-            if (NativeMethods.SetForegroundWindow(window) && NativeMethods.GetForegroundWindow() == window)
+            try
             {
-                return "focused";
+                object hit = accessible.accHitTest(pt.X, pt.Y);
+                if (hit is int && (int)hit != 0)
+                {
+                    accessible.accDoDefaultAction(hit);
+                    return "pressed";
+                }
+                IAccessible child = hit as IAccessible;
+                if (child == null)
+                {
+                    return "press: no button";
+                }
+                try
+                {
+                    child.accDoDefaultAction(0);
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(child);
+                }
+                return "pressed";
             }
-            // A background process is usually refused the foreground, and a hover is not the
-            // input that would earn it. SwitchToThisWindow is what Alt+Tab uses and is let
-            // through -- without typing a key to fool the lock.
-            NativeMethods.SwitchToThisWindow(window, true);
-            return NativeMethods.GetForegroundWindow() == window ? "focused by switching" : "focus refused";
+            catch (COMException ex)
+            {
+                return "press failed: 0x" + ex.ErrorCode.ToString("X");
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(accessible);
+            }
         }
 
         public void End()
@@ -123,7 +163,9 @@ namespace SleepPicker
         private IntPtr WindowOfButtonAt(EdgeSwitch.NativeMethods.POINT pt, out string name)
         {
             name = null;
+            _grouped = false;
             IntPtr list = TaskListAt(pt);
+            _list = list;
             if (list == IntPtr.Zero)
             {
                 return IntPtr.Zero; // the Start button, the clock, an empty stretch of taskbar...
@@ -136,6 +178,7 @@ namespace SleepPicker
                 name = null;
                 return IntPtr.Zero;
             }
+            _grouped = GroupSuffix.IsMatch(name);
             name = GroupSuffix.Replace(name, "").Trim();
             return FindWindow(name);
         }
@@ -176,15 +219,23 @@ namespace SleepPicker
             return found;
         }
 
-        private static string ButtonNameAt(IntPtr list, EdgeSwitch.NativeMethods.POINT pt)
+        /// <summary>The task list's accessibility object, whose children are its buttons; the
+        /// caller releases it.</summary>
+        private static IAccessible TaskListAccessible(IntPtr list)
         {
             Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71"); // IAccessible
             object found;
-            if (NativeMethods.AccessibleObjectFromWindow(list, NativeMethods.OBJID_CLIENT, ref iid, out found) != 0)
+            if (list == IntPtr.Zero ||
+                NativeMethods.AccessibleObjectFromWindow(list, NativeMethods.OBJID_CLIENT, ref iid, out found) != 0)
             {
                 return null;
             }
-            IAccessible accessible = found as IAccessible;
+            return found as IAccessible;
+        }
+
+        private static string ButtonNameAt(IntPtr list, EdgeSwitch.NativeMethods.POINT pt)
+        {
+            IAccessible accessible = TaskListAccessible(list);
             if (accessible == null)
             {
                 return null;
@@ -288,7 +339,6 @@ namespace SleepPicker
             public const long WS_EX_APPWINDOW = 0x00040000;
             public const uint GW_OWNER = 4;
             public const int DWMWA_CLOAKED = 14;
-            public const int SW_RESTORE = 9;
 
             public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);
 
@@ -327,21 +377,6 @@ namespace SleepPicker
 
             [DllImport("user32.dll")]
             public static extern IntPtr GetForegroundWindow();
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            public static extern bool SetForegroundWindow(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            public static extern void SwitchToThisWindow(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool altTab);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            public static extern bool IsIconic(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
         }
     }
 }

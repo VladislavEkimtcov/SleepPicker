@@ -190,8 +190,8 @@ namespace SleepPicker
 
             _hoverFocusItem = new ToolStripMenuItem("Focus windows on hover");
             _hoverFocusItem.ToolTipText =
-                "Rest the pointer on a taskbar button and its window comes to the front, " +
-                "as a click would -- without the click.";
+                "Rest the pointer on a taskbar button and the taskbar presses it for you: the " +
+                "same as a click. Not for the window already in front, which a click would minimize.";
             _hoverFocusItem.Click += OnHoverFocusClick;
             _taskbarItem.DropDownItems.Add(_hoverFocusItem);
 
