@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -21,14 +22,18 @@ namespace SleepPicker
     /// The peek itself is DWM's own, the same call Explorer makes for a thumbnail. It is
     /// undocumented (dwmapi ordinal 113) but has kept this shape since Windows 8.
     ///
-    /// The same lookup also serves the hover focus: the button is pressed through the same
-    /// accessibility object, so the taskbar does exactly what a click on it does.
+    /// The same lookup also serves the hover focus: the window is brought to the front --
+    /// or, when its title is shared, the button is pressed through the same accessibility
+    /// object, so the taskbar picks the window.
     ///
     /// Used from one thread only: the edge-switch worker.
     /// </summary>
     internal sealed class TaskbarPeek
     {
         private const uint PeekWindow = 1;
+
+        /// <summary>How long after a press a window it minimized is still caught and restored.</summary>
+        private const int UndoMinimizeMilliseconds = 250;
 
         private static readonly Regex GroupSuffix = new Regex(@"\s-\s\d+ running windows?$", RegexOptions.CultureInvariant);
 
@@ -37,7 +42,11 @@ namespace SleepPicker
 
         // What the last lookup found, for the press that may follow it.
         private IntPtr _list;
-        private bool _grouped;
+
+        /// <summary>Whether the button under the pointer shows as pressed: the taskbar's own
+        /// mark of the active window, which titles alone cannot give when several windows
+        /// share one.</summary>
+        private bool _pressed;
 
         public bool Active
         {
@@ -55,26 +64,29 @@ namespace SleepPicker
         {
             Covering = null;
             string name;
-            IntPtr window = WindowOfButtonAt(pt, out name);
+            List<IntPtr> windows = WindowsOfButtonAt(pt, out name);
             string at = " at " + pt.X + "," + pt.Y + (Covering != null ? " under " + Covering : "");
-            if (window == IntPtr.Zero)
+            if (windows.Count == 0)
             {
                 End();
                 if (name == null)
                 {
                     return "no button here" + at;
                 }
-                // A group's press needs no window: it only opens the group's list.
-                return "no window found for [" + name + "]" + (focus && _grouped ? ", " + Press(pt) : "") + at;
+                // Not pressed: a button whose window is not on this desktop belongs to one on
+                // another, and the press, like the click, would switch desktops to reach it.
+                return "no window found for [" + name + "]" + at;
             }
-            string did = "[" + name + "] -> 0x" + window.ToInt64().ToString("X");
+            IntPtr window = windows[0];
+            string did = "[" + name + "] -> 0x" + window.ToInt64().ToString("X") +
+                (windows.Count > 1 ? " (title shared by " + windows.Count + ")" : "");
             if (peek)
             {
                 did += ", " + Peek(window);
             }
             if (focus)
             {
-                did += ", " + Focus(window, pt);
+                did += ", " + Focus(windows, pt);
             }
             return did + at;
         }
@@ -95,17 +107,110 @@ namespace SleepPicker
             return "dwm hr=0x" + hr.ToString("X");
         }
 
-        /// <summary>Does what a click on the button would, by having the taskbar press it:
-        /// Explorer may hand out the foreground, which a background process asking for its
-        /// own window is refused (the button only flashes). Skipped for the window already
-        /// in front, where the click would minimize it; a group's press opens its list.</summary>
-        private string Focus(IntPtr window, EdgeSwitch.NativeMethods.POINT pt)
+        /// <summary>Brings the button's window to the front, restored if minimized -- and never
+        /// hides it, as a click on the button of the active window would.
+        ///
+        /// Asked for plainly, Windows mostly refuses once the user has typed into the window
+        /// in front: it holds the foreground for the process that had the last input, and a
+        /// hover is nobody's -- the button only flashes. An Alt tap is what Windows documents
+        /// as lifting that lock, so one is sent then, and only then, and the request made again.
+        ///
+        /// Only windows sharing their title with others (<paramref name="windows"/> holds more
+        /// than one) are left to the taskbar's press, since only Explorer knows which of them
+        /// the button is. The press is a click, though, and the taskbar's idea of the active
+        /// window can lag behind Windows': whatever it minimizes is put straight back.</summary>
+        private string Focus(List<IntPtr> windows, EdgeSwitch.NativeMethods.POINT pt)
         {
-            if (!_grouped && NativeMethods.GetForegroundWindow() == window)
+            if (_pressed)
             {
                 return "already in front";
             }
-            return Press(pt);
+            string first = Activate(windows, pt);
+            if (first != null)
+            {
+                return first;
+            }
+            if (!TapAlt())
+            {
+                return "refused; no Alt tap with a key held";
+            }
+            string second = Activate(windows, pt);
+            return second != null ? "after Alt tap, " + second : "refused even after Alt tap";
+        }
+
+        /// <summary>One attempt: what brought the window forward, or null when Windows refused.</summary>
+        private string Activate(List<IntPtr> windows, EdgeSwitch.NativeMethods.POINT pt)
+        {
+            if (windows.Count == 1)
+            {
+                IntPtr window = windows[0];
+                NativeMethods.SetForegroundWindow(window);
+                if (NativeMethods.GetForegroundWindow() != window)
+                {
+                    return null;
+                }
+                if (NativeMethods.IsIconic(window))
+                {
+                    NativeMethods.ShowWindowAsync(window, NativeMethods.SW_RESTORE);
+                }
+                return "focused";
+            }
+
+            bool[] wasMinimized = new bool[windows.Count];
+            for (int i = 0; i < windows.Count; i++)
+            {
+                wasMinimized[i] = NativeMethods.IsIconic(windows[i]);
+            }
+            // The press is Explorer's, and the right to the foreground an Alt tap gives is
+            // ours: handed on, or the taskbar is refused where we would not be.
+            uint explorer;
+            NativeMethods.GetWindowThreadProcessId(_taskbar, out explorer);
+            NativeMethods.AllowSetForegroundWindow(explorer);
+            IntPtr before = NativeMethods.GetForegroundWindow();
+            string pressed = Press(pt);
+            // The minimize, when it comes, is posted rather than done in the press: watched
+            // for a moment, which the worker can spare once per rest.
+            int start = Environment.TickCount;
+            while (unchecked(Environment.TickCount - start) < UndoMinimizeMilliseconds)
+            {
+                for (int i = 0; i < windows.Count; i++)
+                {
+                    if (!wasMinimized[i] && NativeMethods.IsIconic(windows[i]))
+                    {
+                        NativeMethods.ShowWindowAsync(windows[i], NativeMethods.SW_RESTORE);
+                        NativeMethods.SetForegroundWindow(windows[i]);
+                        return pressed + ", minimized one: restored";
+                    }
+                }
+                System.Threading.Thread.Sleep(15);
+            }
+            return NativeMethods.GetForegroundWindow() != before ? pressed : null;
+        }
+
+        /// <summary>Taps Alt, unless a modifier is already held: added to the user's own keys
+        /// it would make a shortcut of them.</summary>
+        private static bool TapAlt()
+        {
+            foreach (int vk in new int[] { NativeMethods.VK_SHIFT, NativeMethods.VK_CONTROL, NativeMethods.VK_MENU,
+                NativeMethods.VK_LWIN, NativeMethods.VK_RWIN })
+            {
+                if ((NativeMethods.GetAsyncKeyState(vk) & 0x8000) != 0)
+                {
+                    return false;
+                }
+            }
+            NativeMethods.INPUT[] inputs = new NativeMethods.INPUT[] { AltKey(false), AltKey(true) };
+            return NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(NativeMethods.INPUT))) == inputs.Length;
+        }
+
+        private static NativeMethods.INPUT AltKey(bool up)
+        {
+            NativeMethods.INPUT input = new NativeMethods.INPUT();
+            input.type = NativeMethods.INPUT_KEYBOARD;
+            input.ki.wVk = (ushort)NativeMethods.VK_MENU;
+            input.ki.wScan = (ushort)NativeMethods.MapVirtualKey((uint)NativeMethods.VK_MENU, 0);
+            input.ki.dwFlags = up ? NativeMethods.KEYEVENTF_KEYUP : 0u;
+            return input;
         }
 
         /// <summary>The button's default action through its accessibility object: the
@@ -160,27 +265,29 @@ namespace SleepPicker
             _peeked = IntPtr.Zero;
         }
 
-        private IntPtr WindowOfButtonAt(EdgeSwitch.NativeMethods.POINT pt, out string name)
+        /// <summary>The windows the button under <paramref name="pt"/> may stand for, topmost
+        /// first: one, unless its title is shared; none when there is no button there, or its
+        /// window is on another desktop.</summary>
+        private List<IntPtr> WindowsOfButtonAt(EdgeSwitch.NativeMethods.POINT pt, out string name)
         {
             name = null;
-            _grouped = false;
+            _pressed = false;
             IntPtr list = TaskListAt(pt);
             _list = list;
             if (list == IntPtr.Zero)
             {
-                return IntPtr.Zero; // the Start button, the clock, an empty stretch of taskbar...
+                return new List<IntPtr>(); // the Start button, the clock, an empty stretch of taskbar...
             }
             _taskbar = EdgeSwitch.NativeMethods.GetAncestor(list, EdgeSwitch.NativeMethods.GA_ROOT);
 
-            name = ButtonNameAt(list, pt);
+            name = ButtonAt(list, pt, out _pressed);
             if (string.IsNullOrEmpty(name))
             {
                 name = null;
-                return IntPtr.Zero;
+                return new List<IntPtr>();
             }
-            _grouped = GroupSuffix.IsMatch(name);
             name = GroupSuffix.Replace(name, "").Trim();
-            return FindWindow(name);
+            return FindWindows(name);
         }
 
         /// <summary>The task list -- the strip of buttons -- under <paramref name="pt"/>, found
@@ -233,8 +340,11 @@ namespace SleepPicker
             return found as IAccessible;
         }
 
-        private static string ButtonNameAt(IntPtr list, EdgeSwitch.NativeMethods.POINT pt)
+        /// <summary>The name of the button under <paramref name="pt"/>, and whether it shows
+        /// as pressed.</summary>
+        private static string ButtonAt(IntPtr list, EdgeSwitch.NativeMethods.POINT pt, out bool pressed)
         {
+            pressed = false;
             IAccessible accessible = TaskListAccessible(list);
             if (accessible == null)
             {
@@ -245,10 +355,16 @@ namespace SleepPicker
                 object hit = accessible.accHitTest(pt.X, pt.Y);
                 if (hit is int && (int)hit != 0)
                 {
+                    pressed = IsPressed(accessible.get_accState(hit));
                     return accessible.get_accName(hit);
                 }
                 IAccessible child = hit as IAccessible;
-                return child != null ? child.get_accName(0) : null;
+                if (child == null)
+                {
+                    return null;
+                }
+                pressed = IsPressed(child.get_accState(0));
+                return child.get_accName(0);
             }
             finally
             {
@@ -256,14 +372,20 @@ namespace SleepPicker
             }
         }
 
-        /// <summary>The topmost taskbar window titled <paramref name="name"/>; else the topmost
-        /// whose title ends in " - name" (a combined button names the application); else the
-        /// topmost whose title starts with it (the button's name is cut off at 260 characters).</summary>
-        private static IntPtr FindWindow(string name)
+        private static bool IsPressed(object state)
         {
-            IntPtr exact = IntPtr.Zero;
-            IntPtr suffixed = IntPtr.Zero;
-            IntPtr prefixed = IntPtr.Zero;
+            return state is int && ((int)state & NativeMethods.STATE_SYSTEM_PRESSED) != 0;
+        }
+
+        /// <summary>The taskbar windows titled <paramref name="name"/>; else those whose title
+        /// ends in " - name" (a combined button names the application); else those whose title
+        /// starts with it (the button's name is cut off at 260 characters). Topmost first, in
+        /// Z order; more than one when the title does not say which window the button is.</summary>
+        private static List<IntPtr> FindWindows(string name)
+        {
+            List<IntPtr> exact = new List<IntPtr>();
+            List<IntPtr> suffixed = new List<IntPtr>();
+            List<IntPtr> prefixed = new List<IntPtr>();
             string suffix = " - " + name;
             StringBuilder title = new StringBuilder(512);
             NativeMethods.EnumWindows(delegate(IntPtr window, IntPtr unused)
@@ -277,20 +399,19 @@ namespace SleepPicker
                 string text = title.ToString();
                 if (text == name)
                 {
-                    exact = window;
-                    return false; // Z order: the first match is the topmost
+                    exact.Add(window);
                 }
-                if (suffixed == IntPtr.Zero && text.EndsWith(suffix, StringComparison.Ordinal))
+                else if (text.EndsWith(suffix, StringComparison.Ordinal))
                 {
-                    suffixed = window;
+                    suffixed.Add(window);
                 }
-                if (prefixed == IntPtr.Zero && name.Length >= 40 && text.StartsWith(name, StringComparison.Ordinal))
+                else if (name.Length >= 40 && text.StartsWith(name, StringComparison.Ordinal))
                 {
-                    prefixed = window;
+                    prefixed.Add(window);
                 }
                 return true;
             }, IntPtr.Zero);
-            return exact != IntPtr.Zero ? exact : suffixed != IntPtr.Zero ? suffixed : prefixed;
+            return exact.Count > 0 ? exact : suffixed.Count > 0 ? suffixed : prefixed;
         }
 
         /// <summary>Roughly the taskbar's own rule: visible, unowned or an app window, not a
@@ -339,6 +460,15 @@ namespace SleepPicker
             public const long WS_EX_APPWINDOW = 0x00040000;
             public const uint GW_OWNER = 4;
             public const int DWMWA_CLOAKED = 14;
+            public const int SW_RESTORE = 9;
+            public const int STATE_SYSTEM_PRESSED = 0x8;
+            public const uint INPUT_KEYBOARD = 1;
+            public const uint KEYEVENTF_KEYUP = 0x0002;
+            public const int VK_SHIFT = 0x10;
+            public const int VK_CONTROL = 0x11;
+            public const int VK_MENU = 0x12;
+            public const int VK_LWIN = 0x5B;
+            public const int VK_RWIN = 0x5C;
 
             public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);
 
@@ -377,6 +507,55 @@ namespace SleepPicker
 
             [DllImport("user32.dll")]
             public static extern IntPtr GetForegroundWindow();
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool IsIconic(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            public static extern short GetAsyncKeyState(int vKey);
+
+            [DllImport("user32.dll")]
+            public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool AllowSetForegroundWindow(uint processId);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+            [DllImport("user32.dll")]
+            public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+            [StructLayout(LayoutKind.Sequential)]
+            public struct KEYBDINPUT
+            {
+                public ushort wVk;
+                public ushort wScan;
+                public uint dwFlags;
+                public uint time;
+                public IntPtr dwExtraInfo;
+            }
+
+            // INPUT's union is sized by MOUSEINPUT, its largest member; KEYBDINPUT is padded
+            // out to it, or SendInput rejects the structure size.
+            [StructLayout(LayoutKind.Sequential)]
+            public struct INPUT
+            {
+                public uint type;
+                public KEYBDINPUT ki;
+                public uint pad1;
+                public uint pad2;
+            }
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
         }
     }
 }

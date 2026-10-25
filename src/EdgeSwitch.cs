@@ -62,9 +62,11 @@ namespace SleepPicker
         private const int SwipeSpeedPixelsPerSecond = 500;
         private const int SwipeWindowMilliseconds = 200;
 
-        /// <summary>How long the pointer has to rest on a taskbar button before the peek, and
-        /// on the taskbar before an open Task View is closed.</summary>
-        private const int PeekHoverMilliseconds = 150;
+        /// <summary>How long the pointer has to rest on a taskbar button before the peek or the
+        /// focus, and on the taskbar before an open Task View is closed. Short, since the focus
+        /// is there to save a click; any shorter and a pointer sweeping along the taskbar would
+        /// focus what it passes over.</summary>
+        private const int PeekHoverMilliseconds = 100;
 
         /// <summary>
         /// A button that has been down this long is taken as a release that never arrived,

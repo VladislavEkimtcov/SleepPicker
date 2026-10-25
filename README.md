@@ -44,9 +44,11 @@ anywhere: click the moon in the notification area, pick a time.
   - **Peek at windows from taskbar buttons.** Rest on a taskbar button and every other window turns to
     glass, as hovering its thumbnail does, without waiting for the thumbnail. Ends on leaving the
     taskbar or clicking.
-  - **Focus windows on hover.** Rest on a taskbar button and the taskbar presses it for you: the
-    same as a click, through the button's accessibility action, with no input injected. Skipped for
-    the window already in front, which a click would minimize.
+  - **Focus windows on hover.** Rest on a taskbar button and its window comes to the front, as a
+    click would; windows sharing a title are left to the taskbar's own press of the button. Skipped
+    for the window already in front, which a click would minimize. When Windows refuses (it locks
+    the foreground once you have typed into a window), one Alt tap lifts the lock, never while a
+    modifier key is held.
   - **Previews:** one of **Thumbnail previews** (Windows' default), **Title list with close buttons**
     (a row per window with its title and a ✕, no thumbnails) or **No previews** (the peek already
     shows the real window; a click on a grouped button still lists its windows). Restarts Explorer,
