@@ -17,7 +17,8 @@ namespace SleepPicker
     ///   - fling the pointer up into the zone along the top (<see cref="TopDistancePixels"/>
     ///     thick, because the viewer's own title bar and toolbar sit above it): Task View
     ///   - scroll over the taskbar: previous / next desktop, one per gesture
-    ///   - rest on a taskbar button: peek at its window (<see cref="TaskbarPeek"/>)
+    ///   - rest on a taskbar button: peek at its window, bring it to the front, or both
+    ///     (<see cref="TaskbarPeek"/>)
     /// The first three are the "edges" half, the last the "peek" half; either can be off.
     ///
     /// The zone is a band rather than the last pixel because a small VNC viewer window
@@ -118,6 +119,7 @@ namespace SleepPicker
         private volatile int _topDistancePixels;
         private volatile bool _edgesEnabled;
         private volatile bool _peekEnabled;
+        private volatile bool _focusEnabled;
 
         /// <summary>When the worker last had something in hand; read by <see cref="IsQuiet"/>.</summary>
         private volatile int _lastBusyTick = Environment.TickCount;
@@ -165,13 +167,14 @@ namespace SleepPicker
         private object _verifyTarget;
 
         public EdgeSwitch(int dwellMilliseconds, int distancePixels, int topDistancePixels,
-            bool edgesEnabled, bool peekEnabled)
+            bool edgesEnabled, bool peekEnabled, bool focusEnabled)
         {
             _dwellMilliseconds = dwellMilliseconds;
             _distancePixels = distancePixels;
             _topDistancePixels = topDistancePixels;
             _edgesEnabled = edgesEnabled;
             _peekEnabled = peekEnabled;
+            _focusEnabled = focusEnabled;
 
             _workerThread = StartThread(WorkerMain, "Edge switch worker", ThreadPriority.Normal);
             _hookThread = StartThread(HookMain, "Edge switch wheel hook", ThreadPriority.Highest);
@@ -222,6 +225,13 @@ namespace SleepPicker
             set { _peekEnabled = value; }
         }
 
+        /// <summary>Bringing the window of a rested-on taskbar button to the front.</summary>
+        public bool FocusEnabled
+        {
+            get { return _focusEnabled; }
+            set { _focusEnabled = value; }
+        }
+
         /// <summary>Nothing in hand -- no movement, peek or pending check -- for a few seconds.</summary>
         public bool IsQuiet
         {
@@ -247,7 +257,7 @@ namespace SleepPicker
             {
                 _readout = new DevReadout();
             }
-            EdgeLog.Write("started: edges=" + _edgesEnabled + " peek=" + _peekEnabled + " dwell=" + _dwellMilliseconds +
+            EdgeLog.Write("started: edges=" + _edgesEnabled + " peek=" + _peekEnabled + " focus=" + _focusEnabled + " dwell=" + _dwellMilliseconds +
                 " distance=" + _distancePixels + " top=" + _topDistancePixels);
             _sample.Start();
             _housekeeping.Start();
@@ -313,7 +323,7 @@ namespace SleepPicker
             bool buttons = held && unchecked(now - _buttonDownSince) < StuckButtonMilliseconds;
 
             int edge = _edgesEnabled ? EdgeAt(pt, _distancePixels, _topDistancePixels) : 0;
-            bool overTaskbar = _peekEnabled && IsOverTaskbar(pt, 0);
+            bool overTaskbar = (_peekEnabled || _focusEnabled) && IsOverTaskbar(pt, 0);
             // Task View closes from the taskbar or just above it: a fling off the bottom of
             // a VNC viewer stops short of the screen's edge, as one off its side does.
             bool nearTaskbar = _edgesEnabled && IsOverTaskbar(pt, _distancePixels);
@@ -332,9 +342,11 @@ namespace SleepPicker
             }
 
             // A click on a taskbar button activates its window; the peek has done its job.
-            if (_peek.Active && (!overTaskbar || buttons))
+            // The focus alone keeps the pointer watched over the taskbar, so a peek switched
+            // off there is ended here too.
+            if (_peek.Active && (!overTaskbar || buttons || !_peekEnabled))
             {
-                EdgeLog.Write("peek ended: " + (buttons ? "button pressed" : "left the taskbar"));
+                EdgeLog.Write("peek ended: " + (buttons ? "button pressed" : !_peekEnabled ? "switched off" : "left the taskbar"));
                 _peek.End();
             }
 
@@ -374,7 +386,7 @@ namespace SleepPicker
                 if (_moveSerial != _peekSerial && rested >= PeekHoverMilliseconds && !buttons)
                 {
                     _peekSerial = _moveSerial;
-                    EdgeLog.Write("peek: " + _peek.Update(pt));
+                    EdgeLog.Write("taskbar rest: " + _peek.Update(pt, _peekEnabled, _focusEnabled));
                 }
                 return;
             }

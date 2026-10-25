@@ -35,13 +35,17 @@ namespace SleepPicker
         private readonly ToolStripMenuItem _edgeSensitivityItem;
         private readonly ToolStripMenuItem _edgeDistanceItem;
         private readonly ToolStripMenuItem _edgeTopDistanceItem;
+        private readonly ToolStripMenuItem _taskbarItem;
         private readonly ToolStripMenuItem _taskbarPeekItem;
-        private readonly ToolStripMenuItem _hidePreviewsItem;
+        private readonly ToolStripMenuItem _hoverFocusItem;
+
+        /// <summary>One row per <see cref="TaskbarPreviewMode"/>; each Tag is its mode.</summary>
+        private readonly ToolStripMenuItem[] _previewModeItems;
         private readonly EdgePreview _edgePreview = new EdgePreview();
 
         /// <summary>
-        /// The mouse hook behind both the edge switching and the taskbar peek: running while
-        /// either is on, null while both are off.
+        /// The mouse hook behind the edge switching, the taskbar peek and the hover focus:
+        /// running while any is on, null while all are off.
         /// </summary>
         private EdgeSwitch _edgeSwitch;
 
@@ -174,19 +178,44 @@ namespace SleepPicker
             _edgeSwitchItem.DropDownItems.Add(_edgeTopDistanceItem);
             _menu.Items.Add(_edgeSwitchItem);
 
+            // A plain row, like the timeout rows: what it holds is several settings, not one.
+            _taskbarItem = new ToolStripMenuItem("Taskbar modification");
+
             _taskbarPeekItem = new ToolStripMenuItem("Peek at windows from taskbar buttons");
             _taskbarPeekItem.ToolTipText =
                 "Rest the pointer on a taskbar button and every other window turns to glass, " +
                 "as hovering its thumbnail does -- without waiting for the thumbnail.";
             _taskbarPeekItem.Click += OnTaskbarPeekClick;
-            _menu.Items.Add(_taskbarPeekItem);
+            _taskbarItem.DropDownItems.Add(_taskbarPeekItem);
 
-            _hidePreviewsItem = new ToolStripMenuItem("Hide taskbar previews");
-            _hidePreviewsItem.ToolTipText =
-                "No thumbnails over a resting pointer; the peek shows the real window instead. " +
-                "A click on a grouped button still lists its windows. Restarts Explorer; you are asked first.";
-            _hidePreviewsItem.Click += OnHidePreviewsClick;
-            _menu.Items.Add(_hidePreviewsItem);
+            _hoverFocusItem = new ToolStripMenuItem("Focus windows on hover");
+            _hoverFocusItem.ToolTipText =
+                "Rest the pointer on a taskbar button and its window comes to the front, " +
+                "as a click would -- without the click.";
+            _hoverFocusItem.Click += OnHoverFocusClick;
+            _taskbarItem.DropDownItems.Add(_hoverFocusItem);
+
+            _taskbarItem.DropDownItems.Add(new ToolStripSeparator());
+
+            // Two settings in Windows, one choice here: they exclude each other (a hover that
+            // never comes shows no list either), so they are offered as one.
+            _previewModeItems = new ToolStripMenuItem[]
+            {
+                PreviewModeItem(TaskbarPreviewMode.Thumbnails, "Thumbnail previews",
+                    "Windows' own default: a thumbnail of each window over a resting pointer."),
+                PreviewModeItem(TaskbarPreviewMode.List, "Title list with close buttons",
+                    "A row per window -- its title and a close button -- instead of thumbnails. " +
+                    "The button closes a window without bringing it forward."),
+                PreviewModeItem(TaskbarPreviewMode.Hidden, "No previews",
+                    "Nothing over a resting pointer; the peek shows the real window instead. " +
+                    "A click on a grouped button still lists its windows."),
+            };
+            for (int i = 0; i < _previewModeItems.Length; i++)
+            {
+                _previewModeItems[i].ToolTipText += " Restarts Explorer; you are asked first.";
+                _taskbarItem.DropDownItems.Add(_previewModeItems[i]);
+            }
+            _menu.Items.Add(_taskbarItem);
 
             _dynamicIconItem = new ToolStripMenuItem("Dynamic tray icon");
             _dynamicIconItem.ToolTipText =
@@ -246,12 +275,13 @@ namespace SleepPicker
             }
         }
 
-        /// <summary>Starts, retunes or stops the mouse hook to match the two settings that use it.</summary>
+        /// <summary>Starts, retunes or stops the mouse hook to match the settings that use it.</summary>
         private void ApplyPointerFeatures()
         {
             bool edges = Settings.EdgeSwitchEnabled;
             bool peek = Settings.TaskbarPeek;
-            if (!edges && !peek)
+            bool focus = Settings.TaskbarHoverFocus;
+            if (!edges && !peek && !focus)
             {
                 StopEdgeSwitch();
                 return;
@@ -259,11 +289,12 @@ namespace SleepPicker
             if (_edgeSwitch == null)
             {
                 _edgeSwitch = new EdgeSwitch(Settings.EdgeSwitchDwellMilliseconds, Settings.EdgeSwitchDistancePixels,
-                    Settings.EdgeSwitchTopDistancePixels, edges, peek);
+                    Settings.EdgeSwitchTopDistancePixels, edges, peek, focus);
                 return;
             }
             _edgeSwitch.EdgesEnabled = edges;
             _edgeSwitch.PeekEnabled = peek;
+            _edgeSwitch.FocusEnabled = focus;
         }
 
         private void StopEdgeSwitch()
@@ -803,7 +834,12 @@ namespace SleepPicker
         {
             _edgeSwitchItem.Checked = Settings.EdgeSwitchEnabled;
             _taskbarPeekItem.Checked = Settings.TaskbarPeek;
-            _hidePreviewsItem.Checked = TaskbarPreviews.IsHidden();
+            _hoverFocusItem.Checked = Settings.TaskbarHoverFocus;
+            TaskbarPreviewMode mode = TaskbarPreviews.GetMode();
+            for (int i = 0; i < _previewModeItems.Length; i++)
+            {
+                _previewModeItems[i].Checked = (TaskbarPreviewMode)_previewModeItems[i].Tag == mode;
+            }
 
             int dwell = Settings.EdgeSwitchDwellMilliseconds;
             _edgeSensitivityItem.Text = "Sensitivity — " + DescribeDwell(dwell);
@@ -919,21 +955,47 @@ namespace SleepPicker
             }
         }
 
-        private void OnHidePreviewsClick(object sender, EventArgs e)
+        private void OnHoverFocusClick(object sender, EventArgs e)
         {
-            bool hide = !TaskbarPreviews.IsHidden();
+            try
+            {
+                Settings.TaskbarHoverFocus = !Settings.TaskbarHoverFocus;
+                ApplyPointerFeatures();
+            }
+            catch (Exception ex)
+            {
+                ShowError("Could not change the hover focus setting: " + ex.Message);
+            }
+        }
+
+        private ToolStripMenuItem PreviewModeItem(TaskbarPreviewMode mode, string text, string toolTip)
+        {
+            ToolStripMenuItem item = new ToolStripMenuItem(text);
+            item.Tag = mode;
+            item.ToolTipText = toolTip;
+            item.Click += OnPreviewModeClick;
+            return item;
+        }
+
+        private void OnPreviewModeClick(object sender, EventArgs e)
+        {
+            TaskbarPreviewMode mode = (TaskbarPreviewMode)((ToolStripMenuItem)sender).Tag;
+            if (mode == TaskbarPreviews.GetMode())
+            {
+                return; // an Explorer restart that would change nothing
+            }
             // Asked before anything is written, as for the battery icon. Unlike that one this
             // needs no elevation, so No could still write it for the next sign-in -- but a
             // tick that changes nothing visible until then would read as broken.
             if (!ConfirmExplorerRestart(
-                (hide ? "Hiding" : "Showing") + " taskbar previews takes a restart of Windows " +
-                "Explorer, because the taskbar only reads this setting when it starts."))
+                "Changing the taskbar previews takes a restart of Windows Explorer, because " +
+                "the taskbar only reads this setting when it starts."))
             {
                 return;
             }
             try
             {
-                TaskbarPreviews.SetHidden(hide);
+                TaskbarPreviews.SetMode(mode);
             }
             catch (Exception ex)
             {

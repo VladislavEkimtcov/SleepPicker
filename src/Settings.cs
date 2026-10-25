@@ -22,6 +22,7 @@ namespace SleepPicker
         private const string EdgeSwitchDistanceValue = "EdgeSwitchDistancePixels";
         private const string EdgeSwitchTopDistanceValue = "EdgeSwitchTopDistancePixels";
         private const string TaskbarPeekValue = "TaskbarPeek";
+        private const string TaskbarHoverFocusValue = "TaskbarHoverFocus";
         private const string DevReadoutValue = "DevReadout";
 
         /// <summary>
@@ -229,6 +230,25 @@ namespace SleepPicker
                     return;
                 }
                 Forget(TaskbarPeekValue);
+            }
+        }
+
+        /// <summary>
+        /// Whether resting on a taskbar button brings its window to the front. Off by default:
+        /// it needs the same mouse hook, and it moves the focus without a click, which
+        /// nobody should get without asking either.
+        /// </summary>
+        public static bool TaskbarHoverFocus
+        {
+            get { return ReadInt(TaskbarHoverFocusValue, 0, 0, 1) != 0; }
+            set
+            {
+                if (value)
+                {
+                    Store(TaskbarHoverFocusValue, 1);
+                    return;
+                }
+                Forget(TaskbarHoverFocusValue);
             }
         }
 

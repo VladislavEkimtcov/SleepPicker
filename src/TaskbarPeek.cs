@@ -21,6 +21,9 @@ namespace SleepPicker
     /// The peek itself is DWM's own, the same call Explorer makes for a thumbnail. It is
     /// undocumented (dwmapi ordinal 113) but has kept this shape since Windows 8.
     ///
+    /// The same lookup also serves the hover focus: the window the button belongs to is
+    /// brought to the front, as a click on it would.
+    ///
     /// Used from one thread only: the edge-switch worker.
     /// </summary>
     internal sealed class TaskbarPeek
@@ -40,9 +43,11 @@ namespace SleepPicker
         /// <summary>For the log: what answered WindowFromPoint over the buttons, if not them.</summary>
         public string Covering { get; private set; }
 
-        /// <summary>Peeks at the window of the button under <paramref name="pt"/>, or ends
-        /// the peek when there is no button there. Returns what it did, for the log.</summary>
-        public string Update(EdgeSwitch.NativeMethods.POINT pt)
+        /// <summary>Peeks at the window of the button under <paramref name="pt"/>, brings it
+        /// to the front, or both; ends the peek when there is no button there. One lookup
+        /// serves both, so turning both on costs no more than one. Returns what it did, for
+        /// the log.</summary>
+        public string Update(EdgeSwitch.NativeMethods.POINT pt, bool peek, bool focus)
         {
             Covering = null;
             string name;
@@ -53,9 +58,23 @@ namespace SleepPicker
                 End();
                 return (name == null ? "no button here" : "no window found for [" + name + "]") + at;
             }
+            string did = "[" + name + "] -> 0x" + window.ToInt64().ToString("X");
+            if (peek)
+            {
+                did += ", " + Peek(window);
+            }
+            if (focus)
+            {
+                did += ", " + Focus(window);
+            }
+            return did + at;
+        }
+
+        private string Peek(IntPtr window)
+        {
             if (window == _peeked)
             {
-                return "already peeking [" + name + "]" + at;
+                return "already peeking";
             }
             // Peek at the new window straight away: ending the old peek first would flash
             // every window back in between.
@@ -64,7 +83,31 @@ namespace SleepPicker
             {
                 _peeked = window;
             }
-            return "[" + name + "] -> 0x" + window.ToInt64().ToString("X") + ", dwm hr=0x" + hr.ToString("X") + at;
+            return "dwm hr=0x" + hr.ToString("X");
+        }
+
+        /// <summary>Brings <paramref name="window"/> to the front as a click on its button
+        /// would -- restoring it if minimized -- but never the click itself: a click on the
+        /// button of the window already in front minimizes it.</summary>
+        private static string Focus(IntPtr window)
+        {
+            if (NativeMethods.GetForegroundWindow() == window)
+            {
+                return "already in front";
+            }
+            if (NativeMethods.IsIconic(window))
+            {
+                NativeMethods.ShowWindowAsync(window, NativeMethods.SW_RESTORE);
+            }
+            if (NativeMethods.SetForegroundWindow(window) && NativeMethods.GetForegroundWindow() == window)
+            {
+                return "focused";
+            }
+            // A background process is usually refused the foreground, and a hover is not the
+            // input that would earn it. SwitchToThisWindow is what Alt+Tab uses and is let
+            // through -- without typing a key to fool the lock.
+            NativeMethods.SwitchToThisWindow(window, true);
+            return NativeMethods.GetForegroundWindow() == window ? "focused by switching" : "focus refused";
         }
 
         public void End()
@@ -245,6 +288,7 @@ namespace SleepPicker
             public const long WS_EX_APPWINDOW = 0x00040000;
             public const uint GW_OWNER = 4;
             public const int DWMWA_CLOAKED = 14;
+            public const int SW_RESTORE = 9;
 
             public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);
 
@@ -280,6 +324,24 @@ namespace SleepPicker
 
             [DllImport("user32.dll")]
             public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr GetForegroundWindow();
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            public static extern void SwitchToThisWindow(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool altTab);
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool IsIconic(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
         }
     }
 }
